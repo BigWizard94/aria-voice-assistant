@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Aria Brand Colors -->
+    <color name="aria_violet">#7C4DFF</color>
+    <color name="aria_violet_light">#B47CFF</color>
+    <color name="aria_violet_dark">#4A00E0</color>
+    <color name="aria_cyan">#00E5FF</color>
+    <color name="aria_cyan_light">#80FFFF</color>
+    <color name="aria_cyan_dark">#00B2CC</color>
+    <color name="aria_pink">#FF4081</color>
+
+    <!-- Backgrounds -->
+    <color name="aria_dark_bg">#0A0A1A</color>
+    <color name="aria_dark_surface">#12122A</color>
+    <color name="aria_dark_card">#1A1A35</color>
+    <color name="aria_light_bg">#F5F5FF</color>
+
+    <!-- Status -->
+    <color name="aria_success">#00E676</color>
+    <color name="aria_error">#FF5252</color>
+    <color name="aria_warning">#FFD740</color>
+
+    <!-- Notification icon background -->
+    <color name="notification_icon_bg">#7C4DFF</color>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Violet circle -->
+    <path
+        android:fillColor="#7C4DFF"
+        android:pathData="M54,18C34.1,18 18,34.1 18,54s16.1,36 36,36 36,-16.1 36,-36S73.9,18 54,18z" />
+
+    <!-- White A lettermark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30L40,78h6.5l2.8,-8h9.4l2.8,8H68L54,30zM51.2,63l2.8,-8.5 2.8,8.5h-5.6z" />
+
+    <!-- Cyan accent -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,24m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+
+</vector>

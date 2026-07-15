@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Aria splash screen icon — glowing "A" with orb effect.
+    Shown during app startup on the splash screen.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer glow ring -->
+    <path
+        android:fillColor="#337C4DFF"
+        android:pathData="M54,4C26.4,4 4,26.4 4,54s22.4,50 50,50 50,-22.4 50,-50S81.6,4 54,4z" />
+
+    <!-- Inner circle -->
+    <path
+        android:fillColor="#7C4DFF"
+        android:pathData="M54,14C31.9,14 14,31.9 14,54s17.9,40 40,40 40,-17.9 40,-40S76.1,14 54,14z" />
+
+    <!-- Letter A -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,28L38,80h8l3.5,-10h9l3.5,10h8L54,28zM51,62l3,-9 3,9h-6z" />
+
+    <!-- Cyan accent dot -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,22m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+
+</vector>

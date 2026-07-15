@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Aria notification icon — simple "A" lettermark in a circle.
+    Must be monochrome (white) for Android notification tray.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Circle background -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2z" />
+
+    <!-- Letter A -->
+    <path
+        android:fillColor="#FF7C4DFF"
+        android:pathData="M12,6L7.5,18h2l1.1,-3h2.8l1.1,3h2L12,6zM11.1,13l0.9,-2.5 0.9,2.5h-1.8z" />
+
+</vector>

@@ -1,0 +1,56 @@
+<resources>
+    <string name="app_name">Aria</string>
+    <string name="app_description">Open Voice Assistant</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Meet Aria</string>
+    <string name="onboarding_welcome_subtitle">Your private, open-source voice assistant</string>
+    <string name="onboarding_endpoint_title">Choose Your AI Brain</string>
+    <string name="onboarding_key_title">Connect Your AI</string>
+    <string name="onboarding_assistant_title">Replace Google Assistant</string>
+    <string name="onboarding_ready_title">Aria is Ready!</string>
+
+    <!-- States -->
+    <string name="state_idle">Tap to speak</string>
+    <string name="state_listening">Listening…</string>
+    <string name="state_processing">Thinking…</string>
+    <string name="state_speaking">Speaking</string>
+    <string name="state_error">Error</string>
+
+    <!-- Notifications -->
+    <string name="notification_listening_title">Aria Voice Assistant</string>
+    <string name="notification_listening_text">Aria is ready</string>
+    <string name="notification_listening_channel">Aria Listening</string>
+
+    <!-- Permissions -->
+    <string name="permission_mic_title">Microphone Access</string>
+    <string name="permission_mic_message">Aria needs microphone access to hear your voice commands.</string>
+    <string name="permission_contacts_message">Aria needs contacts access to call and message people by name.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_ai_section">AI Configuration</string>
+    <string name="settings_voice_section">Voice</string>
+    <string name="settings_app_section">App</string>
+    <string name="settings_about_section">About</string>
+    <string name="settings_base_url">Base URL</string>
+    <string name="settings_api_key">API Key</string>
+    <string name="settings_model_name">Model Name</string>
+    <string name="settings_system_prompt">System Prompt</string>
+    <string name="settings_test_connection">Test Connection</string>
+    <string name="settings_save">Save</string>
+
+    <!-- Errors -->
+    <string name="error_no_api_key">Please set up your AI API key in settings.</string>
+    <string name="error_no_internet">No internet connection. Check your network.</string>
+    <string name="error_api_invalid_key">Invalid API key. Please check your settings.</string>
+    <string name="error_timeout">Request timed out. Please try again.</string>
+    <string name="error_model_load">Failed to load speech model.</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_mic_button">Microphone button</string>
+    <string name="cd_settings">Settings</string>
+    <string name="cd_history">Conversation history</string>
+    <string name="cd_new_session">New conversation</string>
+    <string name="cd_aria_orb">Aria voice orb</string>
+</resources>

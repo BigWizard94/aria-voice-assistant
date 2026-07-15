@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ── Permissions ─────────────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Hardware features (not required — works on Android Go) -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="true" />
+
+    <application
+        android:name=".AriaApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Aria"
+        android:hardwareAccelerated="true"
+        tools:targetApi="31">
+
+        <!-- ── Main Activity ──────────────────────────────────────────── -->
+        <activity
+            android:name=".ui.screens.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Aria.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Handle assistant invocation -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- ── Voice Interaction Service (Default Assistant Registration) -->
+        <service
+            android:name=".service.AriaVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/interaction_service" />
+        </service>
+
+        <!-- ── Foreground Listening Service ──────────────────────────── -->
+        <service
+            android:name=".service.AriaListenerService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- ── AI Processing Service ─────────────────────────────────── -->
+        <service
+            android:name=".service.AriaAiService"
+            android:exported="false" />
+
+        <!-- ── Boot Receiver (restart listener on reboot) ─────────────── -->
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Settings Activity ──────────────────────────────────────── -->
+        <activity
+            android:name=".ui.screens.SettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.screens.MainActivity" />
+
+        <!-- ── Conversation History Activity ─────────────────────────── -->
+        <activity
+            android:name=".ui.screens.HistoryActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.screens.MainActivity" />
+
+    </application>
+
+</manifest>
