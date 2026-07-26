@@ -8,7 +8,7 @@ import com.bigwizard.aria.data.model.Message
 import com.bigwizard.aria.data.model.Session
 import kotlinx.coroutines.flow.Flow
 
-// ── DAOs ──────────────────────────────────────────────────────────────────────
+// ── DAOs ────────────────────────────────────────────────────────────────────
 
 @Dao
 interface MessageDao {
@@ -63,12 +63,12 @@ interface SessionDao {
     suspend fun getLatestSession(): Session?
 }
 
-// ── Database ──────────────────────────────────────────────────────────────────
+// ── Database ────────────────────────────────────────────────────────────────
 
 @Database(
     entities = [Message::class, Session::class],
     version = 1,
-    exportSchema = true
+    exportSchema = false
 )
 abstract class AriaDatabase : RoomDatabase() {
 
