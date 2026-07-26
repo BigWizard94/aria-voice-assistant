@@ -72,11 +72,6 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- ── AI Processing Service ─────────────────────────────────── -->
-        <service
-            android:name=".service.AriaAiService"
-            android:exported="false" />
-
         <!-- ── Boot Receiver (restart listener on reboot) ─────────────── -->
         <receiver
             android:name=".receiver.BootReceiver"
