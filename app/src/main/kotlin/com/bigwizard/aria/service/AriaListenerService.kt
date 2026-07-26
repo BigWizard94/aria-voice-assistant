@@ -31,18 +31,18 @@ import java.util.UUID
  */
 class AriaListenerService : Service() {
 
-    // ── Engines ───────────────────────────────────────────────────────────────
+    // ── Engines ──────────────────────────────────────────────────────────[...]
 
     private lateinit var sttEngine: SpeechRecognitionEngine
     private lateinit var ttsEngine: TextToSpeechEngine
     private lateinit var aiEngine: AiEngine
     private lateinit var commandExecutor: CommandExecutor
 
-    // ── Coroutines ────────────────────────────────────────────────────────────
+    // ── Coroutines ─────────────────────────────────────────────────────────[...]
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // ── State ─────────────────────────────────────────────────────────────────
+    // ── State ────────────────────────────────────────────────────────────[...]
 
     private val _assistantState = MutableStateFlow<AssistantState>(AssistantState.Idle)
     val assistantState: StateFlow<AssistantState> = _assistantState.asStateFlow()
@@ -51,7 +51,7 @@ class AriaListenerService : Service() {
     private var currentSessionId = UUID.randomUUID().toString()
     private var currentSettings = AppSettings()
 
-    // ── Binder ────────────────────────────────────────────────────────────────
+    // ── Binder ──────────────────────────────────────────────────────────[...]
 
     private val binder = LocalBinder()
 
@@ -61,7 +61,7 @@ class AriaListenerService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    // ── Lifecycle ──────────────────────────────────────────────────────────[...]
 
     override fun onCreate() {
         super.onCreate()
@@ -99,7 +99,7 @@ class AriaListenerService : Service() {
         Log.i(TAG, "AriaListenerService destroyed")
     }
 
-    // ── Settings Observer ─────────────────────────────────────────────────────
+    // ── Settings Observer ──────────────────────────────────────────────────
 
     private fun observeSettings() {
         val app = application as AriaApplication
@@ -110,7 +110,7 @@ class AriaListenerService : Service() {
         }
     }
 
-    // ── Model Loading ─────────────────────────────────────────────────────────
+    // ── Model Loading ───────────────────────────────────────────────────────[...]
 
     private fun loadSttModel() {
         _assistantState.value = AssistantState.Processing
@@ -126,7 +126,7 @@ class AriaListenerService : Service() {
         }
     }
 
-    // ── STT Result Observer ───────────────────────────────────────────────────
+    // ── STT Result Observer ──────────────────────────────────────────────────
 
     private fun observeSttResults() {
         // Observe final results
@@ -160,7 +160,7 @@ class AriaListenerService : Service() {
         }
     }
 
-    // ── Voice Pipeline ────────────────────────────────────────────────────────
+    // ── Voice Pipeline ──────────────────────────────────────────────────────[...]
 
     fun startListening() {
         if (_assistantState.value is AssistantState.Speaking) {
@@ -244,7 +244,7 @@ class AriaListenerService : Service() {
         }
     }
 
-    // ── AI Query ──────────────────────────────────────────────────────────────
+    // ── AI Query ────────────────────────────────────────────────────────[...]
 
     private suspend fun queryAi(userText: String) {
         val config = currentSettings.aiConfig
@@ -289,7 +289,7 @@ class AriaListenerService : Service() {
         )
     }
 
-    // ── TTS ───────────────────────────────────────────────────────────────────
+    // ── TTS ──────────────────────────────────────────────────────────[...]
 
     private fun speak(text: String) {
         _assistantState.value = AssistantState.Speaking(text)
@@ -308,11 +308,11 @@ class AriaListenerService : Service() {
         )
     }
 
-    // ── Database ──────────────────────────────────────────────────────────────
+    // ── Database ────────────────────────────────────────────────────────[...]
 
     private suspend fun saveMessage(role: String, content: String, isError: Boolean = false) {
         val app = application as AriaApplication
-        val message = Message(
+        val message = com.bigwizard.aria.data.model.Message(
             sessionId = currentSessionId,
             role      = role,
             content   = content,
@@ -323,7 +323,7 @@ class AriaListenerService : Service() {
         }
     }
 
-    // ── Session Management ────────────────────────────────────────────────────
+    // ── Session Management ──────────────────────────────────────────────────
 
     fun startNewSession() {
         currentSessionId = UUID.randomUUID().toString()
@@ -333,7 +333,7 @@ class AriaListenerService : Service() {
 
     fun getCurrentSessionId(): String = currentSessionId
 
-    // ── Notification ──────────────────────────────────────────────────────────
+    // ── Notification ────────────────────────────────────────────────────────[...]
 
     private fun buildNotification(text: String): Notification {
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -360,7 +360,7 @@ class AriaListenerService : Service() {
         nm.notify(AriaApplication.NOTIFICATION_ID_LISTENING, buildNotification(text))
     }
 
-    // ── Broadcast ─────────────────────────────────────────────────────────────
+    // ── Broadcast ──────────────────────────────────────────────────────[...]
 
     private fun broadcastState(state: AssistantState) {
         val intent = Intent(ACTION_STATE_CHANGED).apply {
@@ -372,13 +372,13 @@ class AriaListenerService : Service() {
         sendBroadcast(intent)
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────[...]
 
     private fun isLocalEndpoint(url: String): Boolean {
         return url.contains("localhost") || url.contains("127.0.0.1") || url.contains("10.0.2.2")
     }
 
-    // ── Companion ─────────────────────────────────────────────────────────────
+    // ── Companion ──────────────────────────────────────────────────────────[...]
 
     companion object {
         private const val TAG = "AriaListenerService"
