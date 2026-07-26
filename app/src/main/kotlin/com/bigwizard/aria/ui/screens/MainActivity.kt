@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +100,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ── Main Screen ───────────────────────────────────────────────────────────────
+// ── Main Screen ───────────────────────────────────────────────────────────[...]
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -230,7 +231,7 @@ fun MainScreen(viewModel: MainViewModel) {
     }
 }
 
-// ── Top Bar ───────────────────────────────────────────────────────────────────
+// ── Top Bar ───────────────────────────────────────────────────────────[...]
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -287,7 +288,7 @@ fun AriaTopBar(
     )
 }
 
-// ── Mic Button ────────────────────────────────────────────────────────────────
+// ── Mic Button ──────────────────────────────────────────────────────────[...]
 
 @Composable
 fun MicButton(
@@ -335,7 +336,7 @@ fun MicButton(
     }
 }
 
-// ── Empty State ───────────────────────────────────────────────────────────────
+// ── Empty State ───────────────────────────────────────────────────────────[...]
 
 @Composable
 fun EmptyConversationHint() {
@@ -415,7 +416,7 @@ fun PartialTextBubble(text: String) {
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────[...]
 
 fun getStatusLabel(state: AssistantState): String = when (state) {
     is AssistantState.Idle       -> "Tap to speak"

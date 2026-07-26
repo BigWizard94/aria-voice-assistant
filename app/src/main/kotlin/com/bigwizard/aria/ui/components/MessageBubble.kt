@@ -44,7 +44,7 @@ fun MessageBubble(
                     .size(28.dp)
                     .clip(RoundedCornerShape(50))
                     .background(
-                        Brush.radialGradient(
+                        brush = Brush.radialGradient(
                             colors = listOf(AriaViolet, AriaCyanDark)
                         )
                     ),
@@ -76,8 +76,8 @@ fun MessageBubble(
                         )
                     )
                     .background(
-                        when {
-                            isError -> AriaError.copy(alpha = 0.15f)
+                        brush = when {
+                            isError -> Brush.solidColor(AriaError.copy(alpha = 0.15f))
                             isUser  -> Brush.linearGradient(
                                 colors = listOf(AriaViolet, AriaVioletDark)
                             )

@@ -3,7 +3,7 @@ package com.bigwizard.aria.data.model
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-// ── Conversation Message ──────────────────────────────────────────────────────
+// ── Message ────────────────────────────────────────────────────────────────
 
 @Entity(tableName = "messages")
 data class Message(
@@ -111,21 +111,14 @@ sealed class VoiceCommand {
     data class OpenApp(val appName: String) : VoiceCommand()
     data class WebSearch(val query: String) : VoiceCommand()
     data class PlayMusic(val query: String) : VoiceCommand()
-    data class AiQuery(val query: String) : VoiceCommand()
+    data class AiQuery(val text: String) : VoiceCommand()
     object StopListening : VoiceCommand()
     object Unknown : VoiceCommand()
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-const val DEFAULT_SYSTEM_PROMPT = """You are Aria, a helpful, fast, and privacy-focused voice assistant running entirely on the user's device. 
-
-Key traits:
-- Be concise — voice responses should be short and natural (1-3 sentences max unless asked for detail)
-- Be friendly and conversational
-- Never mention that you are powered by any specific AI company
-- Respect user privacy — never ask for personal data you don't need
-- If you cannot do something, say so clearly and suggest an alternative
-- Always respond in the same language the user speaks
-
-You can help with: answering questions, setting alarms/timers, making calls, sending texts, searching the web, playing music, opening apps, and general conversation."""
+const val DEFAULT_SYSTEM_PROMPT = "You are Aria, a helpful, private, and open-source voice assistant for Android. " +
+    "You prioritize user privacy and work offline when possible. " +
+    "Keep responses concise and natural for voice interaction. " +
+    "Be friendly, knowledgeable, and respectful."
