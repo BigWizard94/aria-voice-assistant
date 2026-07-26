@@ -76,17 +76,10 @@ fun MessageBubble(
                         )
                     )
                     .background(
-                        brush = when {
-                            isError -> Brush.solidColor(AriaError.copy(alpha = 0.15f))
-                            isUser  -> Brush.linearGradient(
-                                colors = listOf(AriaViolet, AriaVioletDark)
-                            )
-                            else    -> Brush.linearGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.surfaceVariant,
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            )
+                        color = when {
+                            isError -> AriaError.copy(alpha = 0.15f)
+                            isUser  -> AriaViolet
+                            else    -> MaterialTheme.colorScheme.surfaceVariant
                         }
                     )
                     .padding(horizontal = 14.dp, vertical = 10.dp)
