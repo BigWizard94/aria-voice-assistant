@@ -21,6 +21,11 @@
         android:name="android.hardware.microphone"
         android:required="true" />
 
+    <!-- Declare telephony as an optional feature to match CALL_PHONE / SEND_SMS permissions -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+
     <application
         android:name=".AriaApplication"
         android:allowBackup="true"
