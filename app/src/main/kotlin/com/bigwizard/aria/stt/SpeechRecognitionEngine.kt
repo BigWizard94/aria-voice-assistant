@@ -30,19 +30,11 @@ import java.util.zip.ZipInputStream
 /**
  * Offline speech-to-text engine backed by Vosk.
  *
- * FIX (Aug 2026): the previous implementation used Vosk's
- * StorageService.unpack(), which copies the model out of the app's
- * `assets/` folder. No model was ever bundled into assets (nothing
- * in the repo, nothing in CI), so unpack() threw an IOException on
- * every single launch, which surfaced in the UI as a permanent red
- * error orb before the user ever tapped anything.
- *
- * This version checks internal storage for an already-downloaded
- * model first, and if it's missing, downloads + unzips it from
- * Alphacephei's public Vosk model repo before loading it. No assets
- * bundling required, no APK size hit, and it plays nicer with
- * F-Droid's reproducible-build process than fetching the model at
- * CI/build time would.
+ * Fixed version (Sept 2026):
+ * - Removed brittle "uuid" file check that caused permanent Error on launch
+ * - Now validates real model structure (am/, conf/, graph/)
+ * - Better error messages so the UI can show the real reason
+ * - Still downloads the model automatically on first run
  */
 class SpeechRecognitionEngine(private val context: Context) {
 
@@ -63,7 +55,6 @@ class SpeechRecognitionEngine(private val context: Context) {
         const val MODEL_SMALL_AR = "vosk-model-ar-mgb2-0.4"
     }
 
-    // Own scope so downloads/loads survive recomposition but die with the service.
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val httpClient = OkHttpClient()
 
@@ -119,32 +110,41 @@ class SpeechRecognitionEngine(private val context: Context) {
     }
 
     /**
-     * Loads (or downloads-then-loads) the Vosk model. Safe to call
-     * repeatedly — a no-op once a model is already loaded.
+     * Loads (or downloads-then-loads) the Vosk model.
+     * Safe to call repeatedly — no-op once a model is already loaded.
      */
     fun loadModel(modelName: String = MODEL_SMALL_EN, onComplete: (Boolean) -> Unit = {}) {
         if (isModelLoaded) {
             onComplete(true)
             return
         }
+
         _sttState.value = SttState.LoadingModel
         val modelDir = File(context.filesDir, modelName)
 
         engineScope.launch {
             try {
-                if (!modelDir.exists() || !File(modelDir, "uuid").exists()) {
-                    Log.i(TAG, "Model not found on disk, downloading $modelName...")
+                // Better validation: check for real model folders instead of uuid
+                val isValidModel = modelDir.exists() &&
+                        File(modelDir, "am").exists() &&
+                        File(modelDir, "conf").exists() &&
+                        File(modelDir, "graph").exists()
+
+                if (!isValidModel) {
+                    Log.i(TAG, "Model not found or incomplete, downloading $modelName...")
                     downloadAndUnpackModel(modelName, modelDir)
                 }
+
                 val loadedModel = Model(modelDir.absolutePath)
                 model = loadedModel
                 isModelLoaded = true
+
                 withContext(Dispatchers.Main) {
                     _sttState.value = SttState.Ready
-                    Log.i(TAG, "Vosk model loaded: $modelName")
+                    Log.i(TAG, "Vosk model loaded successfully: $modelName")
                     onComplete(true)
                 }
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 Log.e(TAG, "Failed to load Vosk model", e)
                 withContext(Dispatchers.Main) {
                     _sttState.value = SttState.Error("Failed to load speech model: ${e.message}")
@@ -174,8 +174,9 @@ class SpeechRecognitionEngine(private val context: Context) {
         unzip(zipFile, context.filesDir)
         zipFile.delete()
 
-        if (!File(modelDir, "uuid").exists()) {
-            throw IOException("Downloaded model archive did not produce expected folder: ${modelDir.name}")
+        // Final validation after unpack
+        if (!File(modelDir, "am").exists() || !File(modelDir, "conf").exists()) {
+            throw IOException("Downloaded model is incomplete or corrupted")
         }
     }
 
