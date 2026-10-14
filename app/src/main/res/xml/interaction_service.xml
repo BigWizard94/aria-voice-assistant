@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     Voice Interaction Service configuration.
-    This registers Aria as a valid Android Voice Interaction Service,
-    allowing it to be selected as the default digital assistant in
-    Settings → Apps → Default Apps → Digital Assistant App.
+    Registers Aria as a valid Android Voice Interaction Service so it can be
+    selected in Settings → Apps → Default Apps → Digital Assistant App.
+
+    sessionService and recognitionService MUST be separate components:
+      • sessionService     → a VoiceInteractionSessionService subclass
+      • recognitionService → a RecognitionService subclass
+    (Pointing both at the VoiceInteractionService makes the system reject Aria.)
 -->
 <voice-interaction-service
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:sessionService="com.bigwizard.aria.service.AriaVoiceInteractionService"
-    android:recognitionService="com.bigwizard.aria.service.AriaVoiceInteractionService"
+    android:sessionService="com.bigwizard.aria.service.AriaSessionService"
+    android:recognitionService="com.bigwizard.aria.service.AriaRecognitionService"
     android:supportsAssist="true"
-    android:supportsLaunchVoiceAssistFromKeyguard="true"
-    android:supportsLocalInteraction="true" />
+    android:supportsLaunchVoiceAssistFromKeyguard="false"
+    android:supportsLocalInteraction="false" />

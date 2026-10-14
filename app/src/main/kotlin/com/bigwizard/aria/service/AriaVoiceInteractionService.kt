@@ -1,9 +1,8 @@
 package com.bigwizard.aria.service
 
-import android.content.Intent
-import android.os.Bundle
+import android.content.ComponentName
+import android.content.Context
 import android.service.voice.VoiceInteractionService
-import android.service.voice.VoiceInteractionSession
 import android.util.Log
 
 /**
@@ -12,8 +11,10 @@ import android.util.Log
  * This is what allows Aria to be selected in:
  *   Settings → Apps → Default Apps → Digital Assistant
  *
- * Once set as default, long-pressing the home button launches Aria
- * instead of Google Assistant / Gemini.
+ * The system binds this service while Aria is the default assistant. Each
+ * invocation (long-press home, assist gesture) creates a session through
+ * [AriaSessionService] → [AriaSession], which opens Aria and starts listening.
+ * Speech recognition for the assistant role is provided by [AriaRecognitionService].
  */
 class AriaVoiceInteractionService : VoiceInteractionService() {
 
@@ -30,9 +31,14 @@ class AriaVoiceInteractionService : VoiceInteractionService() {
     companion object {
         private const val TAG = "AriaVoiceInteraction"
 
-        fun isActive(): Boolean = isActiveService(
-            // Check if this service is the active voice interaction service
-            null, null
-        )
+        /** True when the user has selected Aria as the default digital assistant. */
+        fun isDefaultAssistant(context: Context): Boolean = try {
+            isActiveService(
+                context,
+                ComponentName(context, AriaVoiceInteractionService::class.java)
+            )
+        } catch (e: Exception) {
+            false
+        }
     }
 }
