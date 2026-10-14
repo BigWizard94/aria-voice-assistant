@@ -1,5 +1,6 @@
 package com.bigwizard.aria.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -7,16 +8,21 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -24,6 +30,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bigwizard.aria.R
 import com.bigwizard.aria.ai.AiEngine
 import com.bigwizard.aria.ai.EndpointPreset
 import com.bigwizard.aria.data.model.AiConfig
@@ -43,13 +50,22 @@ import com.bigwizard.aria.ui.theme.*
 fun OnboardingScreen(
     onComplete: (AiConfig) -> Unit
 ) {
-    var currentPage by remember { mutableIntStateOf(0) }
-    var selectedPreset by remember { mutableStateOf(AiEngine.PRESET_ENDPOINTS[0]) }
-    var customBaseUrl by remember { mutableStateOf("") }
-    var apiKey by remember { mutableStateOf("") }
-    var modelName by remember { mutableStateOf("") }
+    // rememberSaveable: survive rotation / process death mid-setup.
+    var currentPage by rememberSaveable { mutableIntStateOf(0) }
+    var selectedPresetIndex by rememberSaveable { mutableIntStateOf(0) }
+    val selectedPreset = AiEngine.PRESET_ENDPOINTS[selectedPresetIndex]
+    var customBaseUrl by rememberSaveable { mutableStateOf("") }
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var modelName by rememberSaveable { mutableStateOf(selectedPreset.defaultModel) }
 
     val totalPages = 5
+    val customUrlValid = !selectedPreset.isCustom ||
+        customBaseUrl.trim().let { it.startsWith("http://") || it.startsWith("https://") }
+    val canAdvance = currentPage != 2 || customUrlValid
+
+    BackHandler(enabled = currentPage > 0) { currentPage-- }
+
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier
@@ -59,6 +75,8 @@ fun OnboardingScreen(
                     colors = listOf(AriaDarkBg, AriaDarkSurface)
                 )
             )
+            .systemBarsPadding()
+            .imePadding()
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -94,7 +112,7 @@ fun OnboardingScreen(
                     1 -> ChooseEndpointPage(
                         selectedPreset = selectedPreset,
                         onPresetSelected = { preset ->
-                            selectedPreset = preset
+                            selectedPresetIndex = AiEngine.PRESET_ENDPOINTS.indexOf(preset)
                             modelName = preset.defaultModel
                         }
                     )
@@ -107,7 +125,7 @@ fun OnboardingScreen(
                         modelName = modelName,
                         onModelNameChange = { modelName = it }
                     )
-                    3 -> DefaultAssistantPage()
+                    3 -> DefaultAssistantPage(onOpenSettings = { openDefaultAssistantSettings(context) })
                     4 -> ReadyPage()
                 }
             }
@@ -129,16 +147,19 @@ fun OnboardingScreen(
                         ),
                         border = BorderStroke(1.dp, AriaViolet.copy(alpha = 0.5f))
                     ) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
-                        Text("Back")
+                        Text(stringResource(R.string.action_back))
                     }
                 } else {
                     Spacer(Modifier.width(80.dp))
                 }
 
-                // Page dots
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Page dots (decorative — the progress bar conveys position)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.clearAndSetSemantics { }
+                ) {
                     repeat(totalPages) { index ->
                         Box(
                             modifier = Modifier
@@ -158,25 +179,26 @@ fun OnboardingScreen(
                         if (currentPage < totalPages - 1) {
                             currentPage++
                         } else {
-                            val finalUrl = if (selectedPreset.name == "Custom Endpoint")
-                                customBaseUrl else selectedPreset.baseUrl
-                            val finalModel = modelName.ifBlank { selectedPreset.defaultModel }
+                            val finalUrl = if (selectedPreset.isCustom)
+                                customBaseUrl.trim() else selectedPreset.baseUrl
+                            val finalModel = modelName.trim().ifBlank { selectedPreset.defaultModel }
                             onComplete(
                                 AiConfig(
                                     baseUrl   = finalUrl,
-                                    apiKey    = apiKey,
+                                    apiKey    = apiKey.trim(),
                                     modelName = finalModel
                                 )
                             )
                         }
                     },
+                    enabled = canAdvance,
                     colors = ButtonDefaults.buttonColors(containerColor = AriaViolet)
                 ) {
-                    Text(if (currentPage == totalPages - 1) "Let's Go!" else "Next")
+                    Text(stringResource(if (currentPage == totalPages - 1) R.string.action_finish else R.string.action_next))
                     Spacer(Modifier.width(4.dp))
                     Icon(
                         if (currentPage == totalPages - 1) Icons.Filled.RocketLaunch
-                        else Icons.Filled.ArrowForward,
+                        else Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = null
                     )
                 }
@@ -192,6 +214,7 @@ fun WelcomePage() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -212,7 +235,7 @@ fun WelcomePage() {
         Spacer(Modifier.height(32.dp))
 
         Text(
-            text  = "Meet Aria",
+            text  = stringResource(R.string.onboarding_welcome_title),
             style = MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Bold,
             color = Color.White
@@ -221,7 +244,7 @@ fun WelcomePage() {
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text  = "Your private, open-source\nvoice assistant",
+            text  = stringResource(R.string.onboarding_welcome_subtitle),
             style = MaterialTheme.typography.titleMedium,
             color = Color.White.copy(alpha = 0.7f),
             textAlign = TextAlign.Center
@@ -284,7 +307,7 @@ fun ChooseEndpointPage(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(24.dp))
-        Text("Choose Your AI Brain", style = MaterialTheme.typography.headlineSmall,
+        Text(stringResource(R.string.onboarding_endpoint_title), style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text("Aria works with any OpenAI-compatible API.\nGroq is free and ultra-fast — perfect to start!",
@@ -358,8 +381,8 @@ fun ApiKeyPage(
     onModelNameChange: (String) -> Unit
 ) {
     var showKey by remember { mutableStateOf(false) }
-    val isCustom = preset.name == "Custom Endpoint"
-    val isLocal  = preset.baseUrl.contains("localhost") || preset.baseUrl.contains("127.0.0.1")
+    val isCustom = preset.isCustom
+    val isLocal  = preset.isLocal
 
     Column(
         modifier = Modifier
@@ -369,7 +392,7 @@ fun ApiKeyPage(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(24.dp))
-        Text("Connect Your AI", style = MaterialTheme.typography.headlineSmall,
+        Text(stringResource(R.string.onboarding_key_title), style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold, color = Color.White)
         Spacer(Modifier.height(8.dp))
         Text("Selected: ${preset.name}", style = MaterialTheme.typography.bodyMedium,
@@ -385,6 +408,12 @@ fun ApiKeyPage(
                 placeholder = { Text("https://your-api.com/v1") },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ariaTextFieldColors(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                isError = customUrl.isNotBlank() &&
+                    !(customUrl.trim().startsWith("http://") || customUrl.trim().startsWith("https://")),
+                supportingText = if (customUrl.isBlank()) {
+                    { Text(stringResource(R.string.onboarding_custom_url_required)) }
+                } else null,
                 singleLine = true
             )
             Spacer(Modifier.height(16.dp))
@@ -405,7 +434,9 @@ fun ApiKeyPage(
                     IconButton(onClick = { showKey = !showKey }) {
                         Icon(
                             if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            contentDescription = "Toggle visibility",
+                            contentDescription = stringResource(
+                                if (showKey) R.string.settings_hide_key else R.string.settings_show_key
+                            ),
                             tint = Color.White.copy(alpha = 0.6f)
                         )
                     }
@@ -425,13 +456,7 @@ fun ApiKeyPage(
                         tint = AriaCyan, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = when (preset.name) {
-                            "Groq (Free & Ultra-Fast)" -> "Get a free key at console.groq.com"
-                            "OpenRouter (100+ Models)" -> "Get a key at openrouter.ai/keys"
-                            "OpenAI"                   -> "Get a key at platform.openai.com"
-                            "Together AI"              -> "Get a key at api.together.xyz"
-                            else -> "Enter your API key for ${preset.name}"
-                        },
+                        text = preset.keyHint ?: "Enter your API key for ${preset.name}",
                         style = MaterialTheme.typography.bodySmall,
                         color = AriaCyan.copy(alpha = 0.9f)
                     )
@@ -476,10 +501,11 @@ fun ApiKeyPage(
 // ── Page 4: Default Assistant ─────────────────────────────────────────────────
 
 @Composable
-fun DefaultAssistantPage() {
+fun DefaultAssistantPage(onOpenSettings: () -> Unit = {}) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -487,7 +513,7 @@ fun DefaultAssistantPage() {
         Icon(Icons.Filled.Android, contentDescription = null,
             tint = AriaVioletLight, modifier = Modifier.size(64.dp))
         Spacer(Modifier.height(24.dp))
-        Text("Replace Google Assistant", style = MaterialTheme.typography.headlineSmall,
+        Text(stringResource(R.string.onboarding_assistant_title), style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
         Text("To use Aria when you long-press the home button:",
@@ -524,7 +550,17 @@ fun DefaultAssistantPage() {
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
+        OutlinedButton(
+            onClick = onOpenSettings,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            border = BorderStroke(1.dp, AriaViolet.copy(alpha = 0.5f))
+        ) {
+            Icon(Icons.Outlined.Settings, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.onboarding_open_settings))
+        }
+        Spacer(Modifier.height(16.dp))
         Text("You can skip this and do it later in Settings.",
             style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = 0.4f), textAlign = TextAlign.Center)
@@ -538,13 +574,14 @@ fun ReadyPage() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text("🚀", fontSize = 72.sp)
         Spacer(Modifier.height(24.dp))
-        Text("Aria is Ready!", style = MaterialTheme.typography.displaySmall,
+        Text(stringResource(R.string.onboarding_ready_title), style = MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
         Text("Tap the mic and say anything.\nAria is listening.",

@@ -22,7 +22,7 @@ import kotlin.math.*
  * States:
  *  • Idle      → Slow gentle pulse, soft glow
  *  • Listening → Fast ripple waves, bright cyan
- *  • Processing → Rotating arcs, violet spin
+ *  • Processing / Preparing → Rotating arcs, violet spin
  *  • Speaking  → Bouncing waveform bars
  *  • Error     → Red pulse
  */
@@ -44,7 +44,8 @@ fun AriaOrb(
             animation = tween(
                 durationMillis = when (state) {
                     is AssistantState.Listening   -> 600
-                    is AssistantState.Processing  -> 800
+                    is AssistantState.Processing,
+                    is AssistantState.Preparing   -> 800
                     is AssistantState.Speaking    -> 400
                     else                          -> 2000
                 },
@@ -102,7 +103,8 @@ fun AriaOrb(
     val primaryColor = when (state) {
         is AssistantState.Idle       -> AriaViolet
         is AssistantState.Listening  -> AriaCyan
-        is AssistantState.Processing -> AriaVioletLight
+        is AssistantState.Processing,
+        is AssistantState.Preparing  -> AriaVioletLight
         is AssistantState.Speaking   -> AriaCyan
         is AssistantState.Error      -> AriaError
     }
@@ -138,7 +140,7 @@ fun AriaOrb(
         }
 
         // Rotating arcs (processing state)
-        if (state is AssistantState.Processing) {
+        if (state is AssistantState.Processing || state is AssistantState.Preparing) {
             rotate(rotation, pivot = center) {
                 drawArc(
                     color      = primaryColor.copy(alpha = 0.8f),

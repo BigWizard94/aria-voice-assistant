@@ -16,8 +16,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bigwizard.aria.data.model.Message
 import com.bigwizard.aria.ui.theme.*
-import java.text.SimpleDateFormat
-import java.util.*
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * MessageBubble — Chat-style message display for conversation history.
@@ -29,11 +31,16 @@ fun MessageBubble(
 ) {
     val isUser = message.role == "user"
     val isError = message.isError
+    val time = formatTimestamp(message.timestamp)
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            // TalkBack reads one sentence per bubble instead of "A", text, "2m ago" separately.
+            .clearAndSetSemantics {
+                contentDescription = "${if (isUser) "You" else "Aria"}: ${message.content}, $time"
+            },
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Bottom
     ) {
@@ -100,7 +107,7 @@ fun MessageBubble(
             // Timestamp
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text  = formatTimestamp(message.timestamp),
+                text  = time,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.padding(horizontal = 4.dp)
@@ -134,7 +141,8 @@ private fun formatTimestamp(timestamp: Long): String {
     return when {
         diff < 60_000  -> "just now"
         diff < 3600_000 -> "${diff / 60_000}m ago"
-        diff < 86400_000 -> SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(timestamp))
-        else -> SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(timestamp))
+        // DateFormat honours the user's 12/24-hour preference and locale.
+        diff < 86400_000 -> DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(timestamp))
+        else -> DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
     }
 }

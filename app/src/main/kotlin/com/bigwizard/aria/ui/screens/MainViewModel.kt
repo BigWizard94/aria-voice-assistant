@@ -6,47 +6,65 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bigwizard.aria.AriaApplication
-import com.bigwizard.aria.ai.AiEngine
+import com.bigwizard.aria.R
 import com.bigwizard.aria.data.model.*
 import com.bigwizard.aria.service.AriaListenerService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 /**
- * MainViewModel — UI state management for the main assistant screen.
+ * MainViewModel — UI state for the main, settings and history screens.
  *
- * Connects to AriaListenerService via binding,
- * exposes reactive state flows for Compose UI.
+ * The service is only started/bound by [connectToService], which the activity
+ * calls from the foreground after the permission prompt — never from init, so
+ * Settings/History (which share this ViewModel class) don't spin it up and the
+ * microphone foreground service is never started without RECORD_AUDIO.
  */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as AriaApplication
+    private val prefs = app.preferencesManager
 
     // ── Service Binding ───────────────────────────────────────────────────────
 
     private var ariaService: AriaListenerService? = null
     private var isBound = false
+    private var serviceObservers: Job? = null
+    private var pendingListen = false
+    private var pendingText: String? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val localBinder = binder as? AriaListenerService.LocalBinder
-            ariaService = localBinder?.getService()
-            isBound = true
+            val service = (binder as? AriaListenerService.LocalBinder)?.getService() ?: return
+            ariaService = service
 
-            // Observe service state
-            viewModelScope.launch {
-                ariaService?.assistantState?.collect { state ->
-                    _assistantState.value = state
-                }
+            serviceObservers?.cancel()
+            serviceObservers = viewModelScope.launch {
+                launch { service.assistantState.collect { _assistantState.value = it } }
+                launch { service.partialText.collect { _partialText.value = it } }
+            }
+
+            if (pendingListen) {
+                pendingListen = false
+                service.ensureForeground()
+                service.startListening()
+            }
+            pendingText?.let {
+                pendingText = null
+                service.submitText(it)
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            // Service process crashed/killed; binding stays and reconnects automatically.
+            serviceObservers?.cancel()
             ariaService = null
-            isBound = false
         }
     }
 
@@ -58,137 +76,138 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _partialText = MutableStateFlow("")
     val partialText: StateFlow<String> = _partialText.asStateFlow()
 
-    private val _messages = MutableStateFlow<List<Message>>(emptyList())
-    val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+    val settings: StateFlow<AppSettings> = prefs.appSettingsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
-    private val _settings = MutableStateFlow(AppSettings())
-    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+    /** null while DataStore is still loading — the splash screen stays up meanwhile. */
+    val onboardingDone: StateFlow<Boolean?> = prefs.onboardingDoneFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _isServiceRunning = MutableStateFlow(false)
-    val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
+    private val currentSessionId: StateFlow<String?> = prefs.currentSessionIdFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _connectionTestResult = MutableStateFlow<String?>(null)
-    val connectionTestResult: StateFlow<String?> = _connectionTestResult.asStateFlow()
+    /** Messages of the current conversation (follows "new conversation" automatically). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val messages: StateFlow<List<Message>> = currentSessionId
+        .filterNotNull()
+        .flatMapLatest { app.database.messageDao().getMessagesForSession(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _onboardingDone = MutableStateFlow(false)
-    val onboardingDone: StateFlow<Boolean> = _onboardingDone.asStateFlow()
+    /** All stored messages, for the history screen. */
+    val history: StateFlow<List<Message>> = app.database.messageDao().getAllMessages()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val currentSessionId: String
-        get() = ariaService?.getCurrentSessionId() ?: "default"
-
-    // ── Initialization ────────────────────────────────────────────────────────
+    private val _connectionTestResult = MutableStateFlow<ConnectionTestResult?>(null)
+    val connectionTestResult: StateFlow<ConnectionTestResult?> = _connectionTestResult.asStateFlow()
 
     init {
-        observeSettings()
-        observeOnboarding()
-        startAndBindService()
-    }
-
-    private fun observeSettings() {
-        viewModelScope.launch {
-            app.preferencesManager.appSettingsFlow.collect { settings ->
-                _settings.value = settings
-            }
-        }
-    }
-
-    private fun observeOnboarding() {
-        viewModelScope.launch {
-            app.preferencesManager.onboardingDoneFlow.collect { done ->
-                _onboardingDone.value = done
-            }
-        }
+        viewModelScope.launch { prefs.getOrCreateSessionId() }
     }
 
     // ── Service Control ───────────────────────────────────────────────────────
 
-    fun startAndBindService() {
+    /** Starts + binds the listener service. Call only while an activity is in the foreground. */
+    fun connectToService() {
         val context = getApplication<Application>()
         val intent = Intent(context, AriaListenerService::class.java)
-        context.startForegroundService(intent)
-        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        _isServiceRunning.value = true
+        try {
+            // Plain startService from the foreground; the service promotes itself
+            // to a microphone FGS only once RECORD_AUDIO is granted.
+            context.startService(intent)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "App not in foreground; binding only", e)
+        }
+        if (!isBound) {
+            isBound = context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    fun disconnectFromService() {
+        if (isBound) {
+            getApplication<Application>().unbindService(serviceConnection)
+            isBound = false
+        }
+        serviceObservers?.cancel()
+        ariaService = null
     }
 
     fun stopService() {
         val context = getApplication<Application>()
-        if (isBound) {
-            context.unbindService(serviceConnection)
-            isBound = false
-        }
-        val intent = Intent(context, AriaListenerService::class.java).apply {
-            action = AriaListenerService.ACTION_STOP_SERVICE
-        }
-        context.startService(intent)
-        _isServiceRunning.value = false
+        disconnectFromService()
+        context.startService(
+            Intent(context, AriaListenerService::class.java).setAction(AriaListenerService.ACTION_STOP_SERVICE)
+        )
     }
 
     // ── Voice Control ─────────────────────────────────────────────────────────
 
     fun startListening() {
-        ariaService?.startListening()
-            ?: run {
-                // Service not bound yet — send via intent
-                val context = getApplication<Application>()
-                val intent = Intent(context, AriaListenerService::class.java).apply {
-                    action = AriaListenerService.ACTION_START_LISTENING
-                }
-                context.startService(intent)
-            }
+        val service = ariaService
+        if (service != null) {
+            service.ensureForeground()
+            service.startListening()
+        } else {
+            pendingListen = true
+            connectToService()
+        }
     }
 
     fun stopListening() {
+        pendingListen = false
         ariaService?.stopListening()
     }
 
+    /** Sends typed/tapped text (suggestion chips) through the assistant pipeline. */
+    fun sendText(text: String) {
+        val service = ariaService
+        if (service != null) service.submitText(text) else {
+            pendingText = text
+            connectToService()
+        }
+    }
+
+    fun reportMicPermissionDenied() {
+        pendingListen = false
+        _assistantState.value = AssistantState.Error(
+            getApplication<Application>().getString(R.string.permission_mic_denied)
+        )
+    }
+
     fun startNewSession() {
-        ariaService?.startNewSession()
-        _messages.value = emptyList()
+        viewModelScope.launch { prefs.startNewSession() }
         _partialText.value = ""
     }
 
-    // ── Message Loading ───────────────────────────────────────────────────────
-
-    fun loadMessages(sessionId: String) {
-        viewModelScope.launch {
-            app.database.messageDao()
-                .getMessagesForSession(sessionId)
-                .collect { msgs ->
-                    _messages.value = msgs
-                }
+    fun clearHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            app.database.messageDao().deleteAllMessages()
+            prefs.startNewSession()
         }
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
     fun saveAiConfig(config: AiConfig) {
-        viewModelScope.launch {
-            app.preferencesManager.saveAiConfig(config)
-        }
+        viewModelScope.launch { prefs.saveAiConfig(config) }
     }
 
     fun saveAppSettings(settings: AppSettings) {
-        viewModelScope.launch {
-            app.preferencesManager.saveAppSettings(settings)
-        }
+        viewModelScope.launch { prefs.saveAppSettings(settings) }
     }
 
-    fun completeOnboarding() {
-        viewModelScope.launch {
-            app.preferencesManager.setOnboardingDone(true)
-        }
+    fun completeOnboarding(config: AiConfig) {
+        viewModelScope.launch { prefs.completeOnboarding(config) }
     }
 
     // ── Connection Test ───────────────────────────────────────────────────────
 
     fun testAiConnection(config: AiConfig) {
         viewModelScope.launch {
-            _connectionTestResult.value = "Testing..."
-            val aiEngine = AiEngine()
-            val result = aiEngine.testConnection(config)
+            _connectionTestResult.value = ConnectionTestResult.Testing
+            val result = app.aiEngine.testConnection(config)
             _connectionTestResult.value = result.fold(
-                onSuccess = { "✅ Connected! Response: $it" },
-                onFailure = { "❌ Failed: ${it.message}" }
+                onSuccess = { ConnectionTestResult.Success(it) },
+                onFailure = { ConnectionTestResult.Failure(it.message ?: it.javaClass.simpleName) }
             )
         }
     }
@@ -200,11 +219,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
     override fun onCleared() {
+        disconnectFromService()
         super.onCleared()
-        val context = getApplication<Application>()
-        if (isBound) {
-            context.unbindService(serviceConnection)
-            isBound = false
-        }
     }
+
+    companion object {
+        private const val TAG = "MainViewModel"
+    }
+}
+
+sealed class ConnectionTestResult {
+    object Testing : ConnectionTestResult()
+    data class Success(val reply: String) : ConnectionTestResult()
+    data class Failure(val message: String) : ConnectionTestResult()
 }

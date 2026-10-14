@@ -2,6 +2,8 @@ package com.bigwizard.aria.ui.screens
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -26,12 +29,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.bigwizard.aria.R
+import com.bigwizard.aria.data.model.AppTheme
 import com.bigwizard.aria.data.model.AssistantState
 import com.bigwizard.aria.data.model.Message
 import com.bigwizard.aria.ui.components.AriaOrb
@@ -42,92 +53,140 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
-    // Permission launcher
+    /** Listening was requested (mic tap / assistant invocation) before RECORD_AUDIO was granted. */
+    private var listenAfterPermission = false
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val micGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
-        if (micGranted) {
-            viewModel.startAndBindService()
+    ) {
+        // Whatever was granted, (re)connect: the service only goes foreground with the mic permission.
+        viewModel.connectToService()
+        if (hasMicPermission()) {
+            if (listenAfterPermission) viewModel.startListening()
+        } else if (listenAfterPermission) {
+            viewModel.reportMicPermissionDenied()
         }
+        listenAfterPermission = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Keep the splash until we know whether to show onboarding (avoids a flash of it).
+        splash.setKeepOnScreenCondition { viewModel.onboardingDone.value == null }
 
-        requestPermissions()
+        requestStartupPermissions()
+        if (savedInstanceState == null) handleAssistIntent(intent)
 
         setContent {
             val settings by viewModel.settings.collectAsStateWithLifecycle()
             val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
 
-            AriaTheme(
-                darkTheme = when (settings.theme) {
-                    com.bigwizard.aria.data.model.AppTheme.DARK   -> true
-                    com.bigwizard.aria.data.model.AppTheme.LIGHT  -> false
-                    else -> isSystemInDarkTheme()
-                }
-            ) {
-                if (!onboardingDone) {
-                    OnboardingScreen(
-                        onComplete = { config ->
-                            viewModel.saveAiConfig(config)
-                            viewModel.completeOnboarding()
-                        }
+            AriaTheme(darkTheme = settings.theme.isDark()) {
+                when (onboardingDone) {
+                    null  -> Unit // splash screen still showing
+                    false -> OnboardingScreen(
+                        onComplete = { config -> viewModel.completeOnboarding(config) }
                     )
-                } else {
-                    MainScreen(viewModel = viewModel)
+                    true  -> MainScreen(
+                        viewModel = viewModel,
+                        onMicRequested = ::onMicRequested,
+                        onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
+                        onOpenHistory  = { startActivity(Intent(this, HistoryActivity::class.java)) }
+                    )
                 }
             }
         }
     }
 
-    private fun requestPermissions() {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.READ_CONTACTS,
-                Manifest.permission.CALL_PHONE,
-                Manifest.permission.SEND_SMS
-            )
-        )
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAssistIntent(intent)
     }
 
-    @Composable
-    private fun isSystemInDarkTheme(): Boolean {
-        return androidx.compose.foundation.isSystemInDarkTheme()
+    /** Long-press home / assist gesture (directly or via AriaSession) starts listening. */
+    private fun handleAssistIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action == Intent.ACTION_ASSIST ||
+            intent.getBooleanExtra(EXTRA_START_LISTENING, false)
+        ) {
+            onMicRequested()
+        }
     }
+
+    private fun onMicRequested() {
+        if (hasMicPermission()) {
+            viewModel.startListening()
+        } else {
+            listenAfterPermission = true
+            permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+        }
+    }
+
+    private fun requestStartupPermissions() {
+        val wanted = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            add(Manifest.permission.READ_CONTACTS)
+            add(Manifest.permission.CALL_PHONE)
+        }
+        val missing = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            viewModel.connectToService()
+        } else {
+            permissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun hasMicPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    companion object {
+        const val EXTRA_START_LISTENING = "com.bigwizard.aria.extra.START_LISTENING"
+    }
+}
+
+@Composable
+fun AppTheme.isDark(): Boolean = when (this) {
+    AppTheme.DARK   -> true
+    AppTheme.LIGHT  -> false
+    AppTheme.SYSTEM -> isSystemInDarkTheme()
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────[...]
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainScreen(
+    viewModel: MainViewModel,
+    onMicRequested: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit
+) {
     val assistantState by viewModel.assistantState.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val partialText by viewModel.partialText.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
     val listState = rememberLazyListState()
 
-    // Auto-scroll to bottom on new messages
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
-        }
-    }
-
-    // Load messages for current session
-    LaunchedEffect(Unit) {
-        viewModel.loadMessages(viewModel.currentSessionId)
+    // Auto-scroll to the newest message / live transcript
+    LaunchedEffect(messages.size, partialText.isNotBlank()) {
+        val last = messages.size + (if (partialText.isNotBlank()) 1 else 0) - 1
+        if (last >= 0) listState.animateScrollToItem(last)
     }
 
     Scaffold(
         topBar = {
             AriaTopBar(
-                onSettingsClick = { /* Navigate to settings */ },
-                onHistoryClick  = { /* Navigate to history */ },
+                onSettingsClick = onOpenSettings,
+                onHistoryClick  = onOpenHistory,
                 onNewSession    = { viewModel.startNewSession() }
             )
         },
@@ -160,22 +219,17 @@ fun MainScreen(viewModel: MainViewModel) {
                         .fillMaxWidth(),
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
-                    if (messages.isEmpty()) {
-                        item {
-                            EmptyConversationHint()
+                    if (messages.isEmpty() && partialText.isBlank()) {
+                        item(key = "hint") {
+                            EmptyConversationHint(onSuggestion = { viewModel.sendText(it) })
                         }
                     }
                     items(messages, key = { it.id }) { message ->
-                        AnimatedVisibility(
-                            visible = true,
-                            enter = slideInVertically(initialOffsetY = { it }) + fadeIn()
-                        ) {
-                            MessageBubble(message = message)
-                        }
+                        MessageBubble(message = message)
                     }
                     // Partial text (live STT)
                     if (partialText.isNotBlank()) {
-                        item {
+                        item(key = "partial") {
                             PartialTextBubble(text = partialText)
                         }
                     }
@@ -184,11 +238,12 @@ fun MainScreen(viewModel: MainViewModel) {
                 // ── Orb + Status ──────────────────────────────────────────────
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(bottom = 16.dp, start = 24.dp, end = 24.dp)
                 ) {
-                    // Status label
+                    val statusLabel = statusLabel(assistantState)
+                    // Status label (announced to TalkBack as it changes)
                     AnimatedContent(
-                        targetState = getStatusLabel(assistantState),
+                        targetState = statusLabel,
                         transitionSpec = {
                             fadeIn(tween(300)) togetherWith fadeOut(tween(300))
                         },
@@ -198,11 +253,32 @@ fun MainScreen(viewModel: MainViewModel) {
                             text  = label,
                             style = MaterialTheme.typography.labelLarge,
                             color = getStatusColor(assistantState),
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(bottom = 8.dp)
+                                .semantics { liveRegion = LiveRegionMode.Polite }
                         )
                     }
 
-                    // The Orb
+                    (assistantState as? AssistantState.Preparing)?.let { preparing ->
+                        val progress = preparing.progress
+                        if (progress != null) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.width(180.dp).padding(bottom = 8.dp),
+                                color = AriaViolet
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier.width(180.dp).padding(bottom = 8.dp),
+                                color = AriaViolet
+                            )
+                        }
+                    }
+
+                    // The Orb (decorative; the status text carries the meaning)
                     AriaOrb(
                         state    = assistantState,
                         size     = 180.dp,
@@ -215,11 +291,13 @@ fun MainScreen(viewModel: MainViewModel) {
                     MicButton(
                         state = assistantState,
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (settings.hapticFeedback) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
                             when (assistantState) {
-                                is AssistantState.Listening -> viewModel.stopListening()
+                                is AssistantState.Listening,
                                 is AssistantState.Speaking  -> viewModel.stopListening()
-                                else                        -> viewModel.startListening()
+                                else                        -> onMicRequested()
                             }
                         }
                     )
@@ -259,12 +337,12 @@ fun AriaTopBar(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text  = "Aria",
+                        text  = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text  = "Open Voice Assistant",
+                        text  = stringResource(R.string.app_description),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -273,13 +351,13 @@ fun AriaTopBar(
         },
         actions = {
             IconButton(onClick = onNewSession) {
-                Icon(Icons.Outlined.AddComment, contentDescription = "New conversation")
+                Icon(Icons.Outlined.AddComment, contentDescription = stringResource(R.string.cd_new_session))
             }
             IconButton(onClick = onHistoryClick) {
-                Icon(Icons.Outlined.History, contentDescription = "History")
+                Icon(Icons.Outlined.History, contentDescription = stringResource(R.string.cd_history))
             }
             IconButton(onClick = onSettingsClick) {
-                Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.cd_settings))
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -297,10 +375,18 @@ fun MicButton(
 ) {
     val isListening = state is AssistantState.Listening
     val isSpeaking  = state is AssistantState.Speaking
+    val description = stringResource(
+        when {
+            isListening -> R.string.cd_mic_stop
+            isSpeaking  -> R.string.cd_stop_speaking
+            else        -> R.string.cd_mic_start
+        }
+    )
 
     val buttonColor = when (state) {
         is AssistantState.Listening  -> AriaCyan
-        is AssistantState.Processing -> AriaVioletLight
+        is AssistantState.Processing,
+        is AssistantState.Preparing  -> AriaVioletLight
         is AssistantState.Speaking   -> AriaCyan
         is AssistantState.Error      -> AriaError
         else                         -> AriaViolet
@@ -327,10 +413,10 @@ fun MicButton(
         Icon(
             imageVector = when {
                 isListening -> Icons.Filled.MicOff
-                isSpeaking  -> Icons.Filled.VolumeUp
+                isSpeaking  -> Icons.AutoMirrored.Filled.VolumeUp
                 else        -> Icons.Filled.Mic
             },
-            contentDescription = "Microphone",
+            contentDescription = description,
             modifier = Modifier.size(32.dp)
         )
     }
@@ -339,7 +425,7 @@ fun MicButton(
 // ── Empty State ───────────────────────────────────────────────────────────[...]
 
 @Composable
-fun EmptyConversationHint() {
+fun EmptyConversationHint(onSuggestion: (String) -> Unit = {}) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -376,7 +462,7 @@ fun EmptyConversationHint() {
             ) {
                 row.forEach { suggestion ->
                     SuggestionChip(
-                        onClick = { },
+                        onClick = { onSuggestion(suggestion) },
                         label = {
                             Text(
                                 text  = suggestion,
@@ -418,18 +504,22 @@ fun PartialTextBubble(text: String) {
 
 // ── Helpers ───────────────────────────────────────────────────────────[...]
 
-fun getStatusLabel(state: AssistantState): String = when (state) {
-    is AssistantState.Idle       -> "Tap to speak"
-    is AssistantState.Listening  -> "Listening..."
-    is AssistantState.Processing -> "Thinking..."
-    is AssistantState.Speaking   -> "Speaking"
-    is AssistantState.Error      -> "Error"
+@Composable
+fun statusLabel(state: AssistantState): String = when (state) {
+    is AssistantState.Idle       -> stringResource(R.string.state_idle)
+    is AssistantState.Preparing  -> state.message
+    is AssistantState.Listening  -> stringResource(R.string.state_listening)
+    is AssistantState.Processing -> stringResource(R.string.state_processing)
+    is AssistantState.Speaking   -> stringResource(R.string.state_speaking)
+    // Show the actual reason (model download failed, mic denied, …) instead of just "Error".
+    is AssistantState.Error      -> state.message
 }
 
 @Composable
 fun getStatusColor(state: AssistantState): Color = when (state) {
     is AssistantState.Listening  -> AriaCyan
-    is AssistantState.Processing -> AriaVioletLight
+    is AssistantState.Processing,
+    is AssistantState.Preparing  -> AriaVioletLight
     is AssistantState.Speaking   -> AriaCyan
     is AssistantState.Error      -> AriaError
     else                         -> MaterialTheme.colorScheme.onSurfaceVariant
