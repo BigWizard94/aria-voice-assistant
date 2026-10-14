@@ -96,7 +96,7 @@ Aria is built on a clean, layered architecture optimized for:
 
 ## Security Model
 
-- **API keys**: Stored in Android DataStore (encrypted on Android 6+)
+- **API keys**: Stored in Android DataStore, encrypted with an AES-256-GCM Android Keystore key; excluded from cloud backup
 - **Conversation history**: Local SQLite only, never synced
 - **Voice data**: Processed by Vosk on-device, never transmitted
 - **Network**: Only outbound HTTPS to user-configured AI endpoint

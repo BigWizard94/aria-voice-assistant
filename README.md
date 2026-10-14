@@ -49,7 +49,7 @@ Built by [@BigWizard94](https://github.com/BigWizard94) on a budget Android phon
 - **Offline speech recognition** via [Vosk](https://alphacephei.com/vosk/) — your voice never leaves your device
 - **Zero telemetry** — no analytics, no crash reporting to third parties
 - **Local conversation history** — stored only on your device
-- **API keys encrypted** — stored in Android's secure DataStore
+- **API keys encrypted** — AES-GCM with a hardware-backed Android Keystore key, excluded from backups
 
 ### 🧠 Universal AI Brain (BYOK)
 Aria works with **any OpenAI-compatible API**. You're never locked in:
@@ -68,7 +68,7 @@ Aria works with **any OpenAI-compatible API**. You're never locked in:
 - **Replaces Google Assistant** — set as default, activated by long-pressing home button
 - **Works on Android Go** — optimized for 1-2GB RAM devices
 - **Supports Android 8.0+** — covers 97%+ of active Android devices
-- **Starts on boot** — always ready when you need it
+- **One tap away** — long-press home (as default assistant) and Aria starts listening
 
 ### 🎯 Voice Commands
 | Say... | Aria does... |
@@ -118,7 +118,8 @@ The easiest way to start is with **Groq** — it's free and incredibly fast:
 2. The setup wizard will guide you through:
    - Select **"Groq (Free & Ultra-Fast)"**
    - Paste your API key
-   - Model: `llama3-8b-8192` (pre-filled)
+   - Model: `openai/gpt-oss-20b` (pre-filled)
+   - On first use Aria downloads its ~40 MB offline speech model once (Wi-Fi recommended)
 3. Tap **"Let's Go!"**
 
 ### Step 3: Set as Default Assistant (Optional but Recommended)
@@ -179,8 +180,10 @@ aria-voice-assistant/
 │   ├── tts/
 │   │   └── TextToSpeechEngine.kt   # Android native TTS
 │   ├── service/
-│   │   ├── AriaListenerService.kt  # Core foreground service (voice pipeline)
-│   │   └── AriaVoiceInteractionService.kt  # Default assistant registration
+│   │   ├── AriaListenerService.kt  # Core service (voice pipeline, mic FGS)
+│   │   ├── AriaVoiceInteractionService.kt  # Default assistant registration
+│   │   ├── AriaSessionService.kt   # Assistant session → opens Aria & listens
+│   │   └── AriaRecognitionService.kt # Offline RecognitionService (Vosk)
 │   ├── data/
 │   │   ├── local/
 │   │   │   ├── AriaDatabase.kt     # Room database
@@ -200,10 +203,10 @@ aria-voice-assistant/
 │   │   └── theme/
 │   │       ├── Theme.kt            # Material3 color schemes
 │   │       └── Typography.kt       # Text styles
-│   ├── util/
-│   │   └── CommandExecutor.kt      # System command execution
-│   └── receiver/
-│       └── BootReceiver.kt         # Auto-start on device boot
+│   └── util/
+│       ├── CommandExecutor.kt      # System command execution
+│       ├── SpokenNumbers.kt        # "seven thirty a m" → 07:30, durations
+│       └── KnownApps.kt            # Spoken app names → packages
 └── .github/workflows/
     └── build.yml                   # CI/CD: auto-build & release APKs
 ```
