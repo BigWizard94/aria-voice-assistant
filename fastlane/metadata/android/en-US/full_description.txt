@@ -1,0 +1,20 @@
+Aria is an open-source Android voice assistant that respects you.
+
+Unlike the built-in assistants, Aria:
+
+- Works fully offline for speech recognition (Vosk) and device commands —
+  no account, no cloud required
+- Can be set as your system default assistant
+- Never tracks you: no analytics, no telemetry, no ads
+- Lets you bring your own AI provider key (Groq, OpenRouter, Together,
+  Ollama, LM Studio, ...) for conversational answers — keys are encrypted
+  with the Android Keystore and excluded from cloud backup
+- Understands spoken numbers and natural phrasing for device commands
+  ("set an alarm for seven thirty a m", "turn on the flashlight")
+
+Aria is built for low-power devices and does everything on your phone
+whenever possible. Your voice never leaves the device unless you choose
+a cloud AI provider yourself.
+
+Open source under an OSI-approved license. Source code, issue tracker and
+signed release APKs are on GitHub.

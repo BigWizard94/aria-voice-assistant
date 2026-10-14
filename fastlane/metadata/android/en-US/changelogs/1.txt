@@ -1,0 +1,3 @@
+First public release: default-assistant support, robust offline speech
+recognition, Android 14 compliance, encrypted API-key storage, smarter
+device commands and updated AI provider defaults.

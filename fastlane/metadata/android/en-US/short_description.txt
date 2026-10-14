@@ -1,0 +1,1 @@
+Offline-first, open-source voice assistant. No Google account, no tracking.
