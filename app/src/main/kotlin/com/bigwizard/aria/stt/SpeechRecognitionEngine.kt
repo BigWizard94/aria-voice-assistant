@@ -2,46 +2,42 @@ package com.bigwizard.aria.stt
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
-import java.io.BufferedInputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.IOException
-import java.util.zip.ZipInputStream
+import java.net.UnknownHostException
 
 /**
  * Offline speech-to-text engine backed by Vosk.
  *
- * Fixed version (Sept 2026):
- * - Removed brittle "uuid" file check that caused permanent Error on launch
- * - Now validates real model structure (am/, conf/, graph/)
- * - Better error messages so the UI can show the real reason
- * - Still downloads the model automatically on first run
+ * - Downloads the model on first run (with progress) via [VoskModelManager].
+ * - Shares one loaded model per process.
+ * - Releases the AudioRecord and native Recognizer after every utterance
+ *   (previously both leaked, so the mic failed after a few dozen uses).
+ *
+ * All public methods must be called on the main thread.
  */
-class SpeechRecognitionEngine(private val context: Context) {
+class SpeechRecognitionEngine(context: Context) {
 
     companion object {
         private const val TAG = "SpeechRecognitionEngine"
         private const val SAMPLE_RATE = 16000.0f
-        private const val MODEL_BASE_URL = "https://alphacephei.com/vosk/models"
 
         const val MODEL_SMALL_EN = "vosk-model-small-en-us-0.15"
         const val MODEL_SMALL_FR = "vosk-model-small-fr-0.22"
@@ -52,11 +48,27 @@ class SpeechRecognitionEngine(private val context: Context) {
         const val MODEL_SMALL_ZH = "vosk-model-small-cn-0.22"
         const val MODEL_SMALL_JA = "vosk-model-small-ja-0.22"
         const val MODEL_SMALL_HI = "vosk-model-small-hi-0.22"
-        const val MODEL_SMALL_AR = "vosk-model-ar-mgb2-0.4"
+
+        /** Note: not a "small" model — ~330 MB download, too big for most Go devices. */
+        const val MODEL_AR = "vosk-model-ar-mgb2-0.4"
+
+        /** Maps the app's language setting to a Vosk model. */
+        fun modelForLanguage(language: String): String = when (language.lowercase().substringBefore('-')) {
+            "fr" -> MODEL_SMALL_FR
+            "de" -> MODEL_SMALL_DE
+            "es" -> MODEL_SMALL_ES
+            "pt" -> MODEL_SMALL_PT
+            "ru" -> MODEL_SMALL_RU
+            "zh" -> MODEL_SMALL_ZH
+            "ja" -> MODEL_SMALL_JA
+            "hi" -> MODEL_SMALL_HI
+            "ar" -> MODEL_AR
+            else -> MODEL_SMALL_EN
+        }
     }
 
-    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val httpClient = OkHttpClient()
+    private val appContext = context.applicationContext
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _sttState = MutableStateFlow<SttState>(SttState.Idle)
     val sttState: StateFlow<SttState> = _sttState.asStateFlow()
@@ -68,31 +80,25 @@ class SpeechRecognitionEngine(private val context: Context) {
     val finalResult: SharedFlow<String> = _finalResult.asSharedFlow()
 
     private var model: Model? = null
+    private var loadJob: Job? = null
     private var speechService: SpeechService? = null
-    private var isModelLoaded = false
+    private var recognizer: Recognizer? = null
+
+    val isModelLoaded: Boolean get() = model != null
+    val isLoading: Boolean get() = loadJob?.isActive == true
 
     private val recognitionListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {
-            hypothesis ?: return
-            try {
-                val partial = JSONObject(hypothesis).optString("partial", "")
-                if (partial.isNotBlank()) _partialResult.tryEmit(partial)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse partial result: $hypothesis")
-            }
+            val partial = parse(hypothesis, "partial")
+            if (partial.isNotBlank()) _partialResult.tryEmit(partial)
         }
 
         override fun onResult(hypothesis: String?) {
-            hypothesis ?: return
-            try {
-                val text = JSONObject(hypothesis).optString("text", "")
-                if (text.isNotBlank()) {
-                    Log.i(TAG, "Final STT result: $text")
-                    _finalResult.tryEmit(text)
-                    _sttState.value = SttState.Result(text)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse final result: $hypothesis")
+            val text = parse(hypothesis, "text")
+            if (text.isNotBlank()) {
+                Log.i(TAG, "Final STT result: $text")
+                _sttState.value = SttState.Result(text)
+                _finalResult.tryEmit(text)
             }
         }
 
@@ -100,139 +106,95 @@ class SpeechRecognitionEngine(private val context: Context) {
 
         override fun onError(exception: Exception?) {
             Log.e(TAG, "STT error", exception)
+            releaseAudio()
             _sttState.value = SttState.Error(exception?.message ?: "Speech recognition error")
         }
 
         override fun onTimeout() {
             Log.i(TAG, "STT timeout — no speech detected")
+            releaseAudio()
             _sttState.value = SttState.Timeout
         }
     }
 
+    private fun parse(hypothesis: String?, key: String): String {
+        hypothesis ?: return ""
+        return try {
+            JSONObject(hypothesis).optString(key, "")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse STT JSON: $hypothesis")
+            ""
+        }
+    }
+
     /**
-     * Loads (or downloads-then-loads) the Vosk model.
-     * Safe to call repeatedly — no-op once a model is already loaded.
+     * Loads (downloading first if needed) the Vosk model.
+     * Safe to call repeatedly — concurrent calls share one load.
      */
     fun loadModel(modelName: String = MODEL_SMALL_EN, onComplete: (Boolean) -> Unit = {}) {
-        if (isModelLoaded) {
+        if (model != null) {
             onComplete(true)
             return
         }
+        if (loadJob?.isActive == true) return
 
         _sttState.value = SttState.LoadingModel
-        val modelDir = File(context.filesDir, modelName)
-
-        engineScope.launch {
+        loadJob = engineScope.launch {
             try {
-                // Better validation: check for real model folders instead of uuid
-                val isValidModel = modelDir.exists() &&
-                        File(modelDir, "am").exists() &&
-                        File(modelDir, "conf").exists() &&
-                        File(modelDir, "graph").exists()
-
-                if (!isValidModel) {
-                    Log.i(TAG, "Model not found or incomplete, downloading $modelName...")
-                    downloadAndUnpackModel(modelName, modelDir)
+                val loaded = VoskModelManager.acquire(appContext, modelName) { progress ->
+                    _sttState.value = SttState.Downloading(progress)
                 }
-
-                val loadedModel = Model(modelDir.absolutePath)
-                model = loadedModel
-                isModelLoaded = true
-
-                withContext(Dispatchers.Main) {
-                    _sttState.value = SttState.Ready
-                    Log.i(TAG, "Vosk model loaded successfully: $modelName")
-                    onComplete(true)
-                }
-            } catch (e: Exception) {
+                model = loaded
+                _sttState.value = SttState.Ready
+                Log.i(TAG, "Vosk model loaded: $modelName")
+                onComplete(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Throwable: the native loader can also throw UnsatisfiedLinkError / OOM.
                 Log.e(TAG, "Failed to load Vosk model", e)
-                withContext(Dispatchers.Main) {
-                    _sttState.value = SttState.Error("Failed to load speech model: ${e.message}")
-                    onComplete(false)
+                val reason = when (e) {
+                    is UnknownHostException -> "No internet connection to download the speech model"
+                    is OutOfMemoryError -> "Not enough memory to load the speech model"
+                    else -> e.message ?: e.javaClass.simpleName
                 }
-            }
-        }
-    }
-
-    private fun downloadAndUnpackModel(modelName: String, modelDir: File) {
-        val zipFile = File(context.cacheDir, "$modelName.zip")
-        val request = Request.Builder()
-            .url("$MODEL_BASE_URL/$modelName.zip")
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Model download failed: HTTP ${response.code}")
-            }
-            val body = response.body ?: throw IOException("Empty response body for model download")
-            FileOutputStream(zipFile).use { output ->
-                body.byteStream().copyTo(output)
-            }
-        }
-
-        if (modelDir.exists()) modelDir.deleteRecursively()
-        unzip(zipFile, context.filesDir)
-        zipFile.delete()
-
-        // Final validation after unpack
-        if (!File(modelDir, "am").exists() || !File(modelDir, "conf").exists()) {
-            throw IOException("Downloaded model is incomplete or corrupted")
-        }
-    }
-
-    private fun unzip(zipFile: File, targetDir: File) {
-        ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-            val buffer = ByteArray(8192)
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val outFile = File(targetDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { fos ->
-                        var len: Int
-                        while (zis.read(buffer).also { len = it } > 0) {
-                            fos.write(buffer, 0, len)
-                        }
-                    }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
+                _sttState.value = SttState.Error("Speech model unavailable: $reason")
+                onComplete(false)
             }
         }
     }
 
     fun startListening() {
         val loadedModel = model
-        if (!isModelLoaded || loadedModel == null) {
+        if (loadedModel == null) {
             _sttState.value = SttState.Error("Speech model not loaded yet")
             return
         }
-        if (_sttState.value is SttState.Listening) {
+        if (speechService != null) {
             Log.w(TAG, "Already listening")
             return
         }
         try {
-            val recognizer = Recognizer(loadedModel, SAMPLE_RATE)
-            speechService = SpeechService(recognizer, SAMPLE_RATE).also {
-                it.startListening(recognitionListener)
-            }
+            val rec = Recognizer(loadedModel, SAMPLE_RATE)
+            recognizer = rec
+            val service = SpeechService(rec, SAMPLE_RATE)
+            speechService = service
+            service.startListening(recognitionListener)
             _sttState.value = SttState.Listening
             Log.i(TAG, "Started listening")
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            // IOException: AudioRecord failed (mic busy); SecurityException: permission revoked.
             Log.e(TAG, "Failed to start listening", e)
-            _sttState.value = SttState.Error("Microphone error: ${e.message}")
+            releaseAudio()
+            _sttState.value = SttState.Error(
+                if (e is SecurityException) "Microphone permission is required" else "Microphone error: ${e.message}"
+            )
         }
     }
 
     fun stopListening() {
-        speechService?.stop()
-        speechService = null
-        if (_sttState.value is SttState.Listening) {
-            _sttState.value = SttState.Ready
-        }
-        Log.i(TAG, "Stopped listening")
+        releaseAudio()
+        if (_sttState.value is SttState.Listening) _sttState.value = SttState.Ready
     }
 
     fun pauseListening() {
@@ -243,11 +205,34 @@ class SpeechRecognitionEngine(private val context: Context) {
         speechService?.setPause(false)
     }
 
-    fun destroy() {
-        stopListening()
-        model?.close()
+    /** Stops recording and frees AudioRecord + native recognizer. */
+    private fun releaseAudio() {
+        speechService?.let {
+            it.stop()      // joins the recognizer thread
+            it.shutdown()  // releases the AudioRecord
+        }
+        speechService = null
+        recognizer?.close()
+        recognizer = null
+    }
+
+    /** Frees the model to reclaim RAM (it reloads on the next [loadModel]). */
+    fun unloadModel() {
+        if (speechService != null || model == null) return
         model = null
-        isModelLoaded = false
+        VoskModelManager.release()
+        _sttState.value = SttState.Idle
+        Log.i(TAG, "Vosk model unloaded to save memory")
+    }
+
+    fun destroy() {
+        loadJob?.cancel()
+        releaseAudio()
+        if (model != null) {
+            model = null
+            VoskModelManager.release()
+        }
+        engineScope.cancel()
         _sttState.value = SttState.Idle
         Log.i(TAG, "SpeechRecognitionEngine destroyed")
     }
