@@ -1,165 +1,117 @@
 package com.bigwizard.aria.ai
 
 import com.bigwizard.aria.data.model.VoiceCommand
+import com.bigwizard.aria.util.KnownApps
+import com.bigwizard.aria.util.SpokenNumbers
 
 /**
  * CommandParser — Detects system-level voice commands before sending to AI.
  *
- * Fast, regex-based pattern matching for common device actions.
- * If no command is matched, falls through to the AI engine.
+ * Every pattern is anchored to the start of the (normalised) utterance, so a
+ * command word buried in a sentence never triggers an action. Previously
+ * "can you recall what I said" placed a phone call ("call what I said"),
+ * "display the time" played music and "what is ..." always opened a browser.
+ *
+ * If no command matches, the text goes to the AI engine.
  */
 object CommandParser {
 
-    // ── Pattern Groups ────────────────────────────────────────────────────────
+    private val IGNORE = RegexOption.IGNORE_CASE
 
-    private val CALL_PATTERNS = listOf(
-        Regex("""(?:call|phone|dial|ring)\s+(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:make a call to|place a call to)\s+(.+)""", RegexOption.IGNORE_CASE)
+    /** Wake words / politeness Vosk transcribes in front of the actual command. */
+    private val LEADING_FILLER = Regex(
+        """^(?:(?:hey|hi|ok|okay)\s+)?(?:aria\s+)?(?:(?:please|can you|could you|would you|will you|i want you to|i'd like you to)\s+)*""",
+        IGNORE
+    )
+    private val TRAILING_FILLER = Regex("""\s+(?:please|for me|now)$""", IGNORE)
+
+    // ── Pattern Groups (all anchored) ─────────────────────────────────────────
+
+    private val STOP_PATTERN = Regex(
+        """^(?:stop|cancel|never ?mind|quit|exit|goodbye|bye|shut up|stop listening|stop aria|that'?s all|that is all)$""",
+        IGNORE
     )
 
-    private val SMS_PATTERNS = listOf(
-        Regex("""(?:text|send (?:a )?(?:text|message|sms) to)\s+(.+?)\s+(?:saying|that|:)\s+(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:message)\s+(.+?)\s+(?:saying|that|:)\s+(.+)""", RegexOption.IGNORE_CASE)
+    private val CALL_PATTERN = Regex(
+        """^(?:call|phone|dial|ring|make a call to|place a call to)\s+(.+)$""", IGNORE
     )
 
-    private val ALARM_PATTERNS = listOf(
-        Regex("""(?:set (?:an )?alarm|wake me up|alarm)\s+(?:at|for)?\s*(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:wake me at)\s+(.+)""", RegexOption.IGNORE_CASE)
+    private val SMS_PATTERN = Regex(
+        """^(?:text|message|send (?:a )?(?:text|message|sms)(?: to)?)\s+(.+?)\s*(?:\bsaying\b|\bthat says\b|\bthat\b|:)\s*(.+)$""",
+        IGNORE
     )
+
+    private val ALARM_PATTERN = Regex(
+        """^(?:set (?:an |a |the |my )?alarm|wake me(?: up)?|alarm)(?:\s+(?:at|for))?\s+(.+)$""", IGNORE
+    )
+
+    private val BARE_TIMER_PATTERN = Regex("""^(?:set|start) (?:a |the |an )?timer$""", IGNORE)
 
     private val TIMER_PATTERNS = listOf(
-        Regex("""(?:set (?:a )?timer|start (?:a )?timer)\s+(?:for)?\s*(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:timer)\s+(?:for)?\s*(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:remind me in)\s+(.+)""", RegexOption.IGNORE_CASE)
+        Regex("""^(?:set|start) (?:a |the |an )?timer(?:\s+for)?\s+(.+)$""", IGNORE),
+        Regex("""^timer(?:\s+for)?\s+(.+)$""", IGNORE),
+        Regex("""^remind me in\s+(.+)$""", IGNORE),
+        // "five minute timer", "set a ten minute timer"
+        Regex("""^(?:(?:set|start)\s+)?(?:a |an )?(.+?)\s+timer$""", IGNORE)
     )
 
-    private val OPEN_APP_PATTERNS = listOf(
-        Regex("""(?:open|launch|start|run)\s+(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:go to|switch to)\s+(.+)""", RegexOption.IGNORE_CASE)
+    private val MUSIC_PATTERN = Regex("""^(?:play|listen to|put on)\s+(?:some\s+)?(.+)$""", IGNORE)
+
+    private val OPEN_APP_PATTERN = Regex(
+        """^(?:open|launch|start|run|go to|switch to)\s+(?:the\s+)?(.+?)(?:\s+app)?$""", IGNORE
     )
 
-    private val SEARCH_PATTERNS = listOf(
-        Regex("""(?:search (?:for|the web for)?|google|look up|find)\s+(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:what is|what are|who is|who are|where is|how do|how does)\s+(.+)""", RegexOption.IGNORE_CASE)
-    )
-
-    private val MUSIC_PATTERNS = listOf(
-        Regex("""(?:play|listen to|put on)\s+(.+)""", RegexOption.IGNORE_CASE),
-        Regex("""(?:play some)\s+(.+)""", RegexOption.IGNORE_CASE)
-    )
-
-    private val STOP_PATTERNS = listOf(
-        Regex("""^(?:stop|cancel|never mind|quit|exit|goodbye|bye|shut up)$""", RegexOption.IGNORE_CASE),
-        Regex("""^(?:stop listening|stop aria|that's all|that is all)$""", RegexOption.IGNORE_CASE)
-    )
-
-    // ── App name shortcuts ────────────────────────────────────────────────────
-
-    private val APP_SHORTCUTS = mapOf(
-        "youtube"   to "com.google.android.youtube",
-        "maps"      to "com.google.android.apps.maps",
-        "camera"    to "android.media.action.IMAGE_CAPTURE",
-        "settings"  to "android.settings.SETTINGS",
-        "calculator" to "com.android.calculator2",
-        "calendar"  to "com.android.calendar",
-        "contacts"  to "com.android.contacts",
-        "messages"  to "com.android.mms",
-        "phone"     to "com.android.phone",
-        "browser"   to "android.intent.action.VIEW",
-        "spotify"   to "com.spotify.music",
-        "whatsapp"  to "com.whatsapp",
-        "telegram"  to "org.telegram.messenger",
-        "instagram" to "com.instagram.android",
-        "twitter"   to "com.twitter.android",
-        "facebook"  to "com.facebook.katana",
-        "gmail"     to "com.google.android.gm",
-        "clock"     to "com.android.deskclock",
-        "gallery"   to "com.android.gallery3d",
-        "files"     to "com.android.documentsui"
+    private val SEARCH_PATTERN = Regex(
+        """^(?:search(?: the web| online| google)?(?: for)?|google|look up|find)\s+(.+)$""", IGNORE
     )
 
     // ── Main parse function ───────────────────────────────────────────────────
 
+    fun normalize(input: String): String {
+        var s = input.replace(',', ' ').trim().replace(Regex("\\s+"), " ").trimEnd('.', '!', '?')
+        s = LEADING_FILLER.replaceFirst(s, "")
+        s = TRAILING_FILLER.replaceFirst(s, "")
+        return s.trim()
+    }
+
     fun parse(input: String): VoiceCommand {
-        val trimmed = input.trim()
+        val original = input.trim()
+        val text = normalize(original)
+        if (text.isEmpty()) return VoiceCommand.Unknown
 
-        // Stop commands
-        for (pattern in STOP_PATTERNS) {
-            if (pattern.matches(trimmed)) return VoiceCommand.StopListening
+        if (STOP_PATTERN.matches(text)) return VoiceCommand.StopListening
+
+        CALL_PATTERN.matchEntire(text)?.let { return VoiceCommand.PhoneCall(it.groupValues[1].trim()) }
+
+        SMS_PATTERN.matchEntire(text)?.let {
+            return VoiceCommand.SendSms(it.groupValues[1].trim(), it.groupValues[2].trim())
         }
 
-        // Call commands
-        for (pattern in CALL_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val contact = match.groupValues[1].trim()
-                return VoiceCommand.PhoneCall(contact)
-            }
+        // Timers before alarms ("set a timer for…" must not become an alarm).
+        if (BARE_TIMER_PATTERN.matches(text)) return VoiceCommand.SetTimer("")
+        for ((index, pattern) in TIMER_PATTERNS.withIndex()) {
+            val match = pattern.matchEntire(text) ?: continue
+            val duration = match.groupValues[1].trim()
+            // The loose "<x> timer" form must actually contain a duration.
+            if (index == TIMER_PATTERNS.lastIndex && SpokenNumbers.parseDurationSeconds(duration) == null) continue
+            return VoiceCommand.SetTimer(duration)
         }
 
-        // SMS commands
-        for (pattern in SMS_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val contact = match.groupValues[1].trim()
-                val message = match.groupValues[2].trim()
-                return VoiceCommand.SendSms(contact, message)
-            }
+        ALARM_PATTERN.matchEntire(text)?.let { return VoiceCommand.SetAlarm(it.groupValues[1].trim()) }
+
+        MUSIC_PATTERN.matchEntire(text)?.let {
+            val query = it.groupValues[1].trim()
+            // "play youtube" / "play spotify" means open the app
+            return if (KnownApps.isKnown(query)) VoiceCommand.OpenApp(query) else VoiceCommand.PlayMusic(query)
         }
 
-        // Alarm commands
-        for (pattern in ALARM_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val time = match.groupValues[1].trim()
-                return VoiceCommand.SetAlarm(time)
-            }
-        }
+        OPEN_APP_PATTERN.matchEntire(text)?.let { return VoiceCommand.OpenApp(it.groupValues[1].trim()) }
 
-        // Timer commands
-        for (pattern in TIMER_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val duration = match.groupValues[1].trim()
-                return VoiceCommand.SetTimer(duration)
-            }
-        }
+        SEARCH_PATTERN.matchEntire(text)?.let { return VoiceCommand.WebSearch(it.groupValues[1].trim()) }
 
-        // Music commands (before open, to catch "play music")
-        for (pattern in MUSIC_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val query = match.groupValues[1].trim()
-                // Don't treat "play [app name]" as music if it's a known app
-                if (!APP_SHORTCUTS.containsKey(query.lowercase())) {
-                    return VoiceCommand.PlayMusic(query)
-                }
-            }
-        }
-
-        // Open app commands
-        for (pattern in OPEN_APP_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val appName = match.groupValues[1].trim()
-                return VoiceCommand.OpenApp(appName)
-            }
-        }
-
-        // Search commands
-        for (pattern in SEARCH_PATTERNS) {
-            val match = pattern.find(trimmed)
-            if (match != null) {
-                val query = match.groupValues[1].trim()
-                return VoiceCommand.WebSearch(query)
-            }
-        }
-
-        // Default: send to AI
-        return VoiceCommand.AiQuery(trimmed)
+        // Default: questions and everything else go to the AI.
+        return VoiceCommand.AiQuery(original)
     }
 
-    fun resolveAppPackage(appName: String): String? {
-        return APP_SHORTCUTS[appName.lowercase().trim()]
-    }
+    fun resolveAppPackage(appName: String): String? = KnownApps.packageFor(appName)
 }
