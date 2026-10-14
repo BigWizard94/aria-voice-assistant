@@ -53,6 +53,10 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      # Catches missing R8 keep rules (Vosk/JNA/Gson) that only break minified builds.
+      - name: Build release APK (R8)
+        run: ./gradlew assembleRelease --stacktrace
+
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
