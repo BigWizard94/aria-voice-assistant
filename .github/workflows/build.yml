@@ -33,6 +33,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default `packages` includes the obsolete `tools`
+          # package, which Google removed from the SDK repository and now
+          # fails the build (sdkmanager exit 1). platform-tools is all we need.
+          packages: platform-tools
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -82,6 +87,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default `packages` includes the obsolete `tools`
+          # package, which Google removed from the SDK repository and now
+          # fails the build (sdkmanager exit 1). platform-tools is all we need.
+          packages: platform-tools
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
