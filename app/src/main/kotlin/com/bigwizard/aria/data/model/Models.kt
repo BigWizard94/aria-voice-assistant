@@ -31,9 +31,9 @@ data class Session(
 // ── AI Settings ───────────────────────────────────────────────────────────────
 
 data class AiConfig(
-    val baseUrl: String = "https://api.groq.com/openai/v1",
+    val baseUrl: String = DEFAULT_AI_BASE_URL,
     val apiKey: String = "",
-    val modelName: String = "llama3-8b-8192",
+    val modelName: String = DEFAULT_AI_MODEL,
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
     val maxTokens: Int = 512,
     val temperature: Float = 0.7f,
@@ -62,6 +62,10 @@ enum class AppTheme { LIGHT, DARK, SYSTEM }
 
 sealed class AssistantState {
     object Idle : AssistantState()
+
+    /** Getting ready to listen (loading / first-run download of the speech model). */
+    data class Preparing(val message: String, val progress: Float? = null) : AssistantState()
+
     object Listening : AssistantState()
     object Processing : AssistantState()
     data class Speaking(val text: String) : AssistantState()
@@ -75,30 +79,41 @@ data class ChatMessage(
     val content: String
 )
 
+// Field names match the OpenAI wire format. Gson omits null fields, so the
+// optional reasoning controls are only sent to models that understand them.
 data class ChatRequest(
     val model: String,
     val messages: List<ChatMessage>,
     val max_tokens: Int = 512,
     val temperature: Float = 0.7f,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    val reasoning_effort: String? = null,
+    val include_reasoning: Boolean? = null
 )
 
+// Response fields are nullable: Gson ignores Kotlin nullability, and servers
+// (Ollama, LM Studio, proxies) omit fields freely.
 data class ChatResponse(
-    val id: String,
-    val choices: List<Choice>,
+    val id: String?,
+    val choices: List<Choice>?,
     val usage: Usage?
 )
 
 data class Choice(
-    val index: Int,
-    val message: ChatMessage,
+    val index: Int?,
+    val message: ResponseMessage?,
     val finish_reason: String?
 )
 
+data class ResponseMessage(
+    val role: String?,
+    val content: String?
+)
+
 data class Usage(
-    val prompt_tokens: Int,
-    val completion_tokens: Int,
-    val total_tokens: Int
+    val prompt_tokens: Int?,
+    val completion_tokens: Int?,
+    val total_tokens: Int?
 )
 
 // ── Command Recognition ───────────────────────────────────────────────────────
@@ -117,6 +132,24 @@ sealed class VoiceCommand {
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
+
+const val DEFAULT_AI_BASE_URL = "https://api.groq.com/openai/v1"
+
+/**
+ * Groq retired llama3-8b-8192 (Aug 2025) and llama-3.1-8b-instant (Aug 2026)
+ * for free/developer tiers; openai/gpt-oss-20b is Groq's recommended replacement.
+ * https://console.groq.com/docs/deprecations
+ */
+const val DEFAULT_AI_MODEL = "openai/gpt-oss-20b"
+
+/** (baseUrl, old default model) → replacement, applied once to saved settings. */
+val LEGACY_AI_MODELS: Map<Pair<String, String>, String> = mapOf(
+    ("https://api.groq.com/openai/v1" to "llama3-8b-8192") to DEFAULT_AI_MODEL,
+    ("https://api.groq.com/openai/v1" to "llama3-70b-8192") to DEFAULT_AI_MODEL,
+    ("https://api.groq.com/openai/v1" to "llama-3.1-8b-instant") to DEFAULT_AI_MODEL,
+    ("https://openrouter.ai/api/v1" to "mistralai/mistral-7b-instruct:free") to "openrouter/free",
+    ("https://api.together.xyz/v1" to "meta-llama/Llama-3-8b-chat-hf") to "Qwen/Qwen3.5-9B"
+)
 
 const val DEFAULT_SYSTEM_PROMPT = "You are Aria, a helpful, private, and open-source voice assistant for Android. " +
     "You prioritize user privacy and work offline when possible. " +
