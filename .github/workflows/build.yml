@@ -3,6 +3,7 @@ name: Aria — Build & Test
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
@@ -39,6 +40,14 @@ jobs:
           # fails the build (sdkmanager exit 1). platform-tools is all we need.
           packages: platform-tools
 
+      - name: Decode release keystore
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "$ARIA_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/aria-release.p12"
+          echo "ARIA_KEYSTORE_PATH=$RUNNER_TEMP/aria-release.p12" >> "$GITHUB_ENV"
+        env:
+          ARIA_KEYSTORE_BASE64: ${{ secrets.ARIA_KEYSTORE_BASE64 }}
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -61,6 +70,10 @@ jobs:
       # Catches missing R8 keep rules (Vosk/JNA/Gson) that only break minified builds.
       - name: Build release APK (R8)
         run: ./gradlew assembleRelease --stacktrace
+        env:
+          ARIA_KEYSTORE_PASSWORD: ${{ secrets.ARIA_KEYSTORE_PASSWORD }}
+          ARIA_KEY_ALIAS: ${{ secrets.ARIA_KEY_ALIAS }}
+          ARIA_KEY_PASSWORD: ${{ secrets.ARIA_KEY_PASSWORD }}
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
@@ -106,3 +119,86 @@ jobs:
           name: lint-results
           path: app/build/reports/lint-results-*.html
           retention-days: 7
+
+  # ── Release ───────────────────────────────────────────────────────────────
+  release:
+    name: Publish Release APKs
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Decode release keystore
+        run: |
+          echo "$ARIA_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/aria-release.p12"
+          echo "ARIA_KEYSTORE_PATH=$RUNNER_TEMP/aria-release.p12" >> "$GITHUB_ENV"
+        env:
+          ARIA_KEYSTORE_BASE64: ${{ secrets.ARIA_KEYSTORE_BASE64 }}
+
+      - name: Build signed release APKs
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          ARIA_KEYSTORE_PASSWORD: ${{ secrets.ARIA_KEYSTORE_PASSWORD }}
+          ARIA_KEY_ALIAS: ${{ secrets.ARIA_KEY_ALIAS }}
+          ARIA_KEY_PASSWORD: ${{ secrets.ARIA_KEY_PASSWORD }}
+
+      - name: Create GitHub Release
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          cat > /tmp/release-notes.md << 'NOTES'
+          ## Aria ${TAG} — first public release
+
+          Open-source, offline-first Android voice assistant. No Google account required,
+          no tracking, no telemetry. Can replace the system default assistant.
+
+          ### What's in this rebuild
+          - Real default-assistant support (VoiceInteractionSession + offline Vosk RecognitionService)
+          - Robust offline speech recognition (Vosk): safe model downloads with progress,
+            shared model across services, no more mic lockups
+          - Android 14 microphone foreground-service compliance (fixes first-launch crash)
+          - Updated AI provider defaults (Groq, OpenRouter, Together, Ollama) with hardened parsing
+          - Smarter device commands: anchored patterns, spoken-number parsing ("seven thirty a m")
+          - API keys encrypted with Android Keystore (AES-256-GCM), excluded from cloud backup
+          - Permission flow, message display, settings and accessibility fixes
+
+          ### Install
+          Grab the APK matching your device below — most modern phones want
+          `app-arm64-v8a-release.apk`. `app-universal-release.apk` works everywhere
+          but is larger. Enable "Install unknown apps" for your browser when prompted.
+
+          On first launch, grant the microphone permission and let Aria download the
+          offline speech model (~40 MB, one time). Add your own AI provider key in
+          Settings to enable conversational answers, or use it purely offline for
+          device commands.
+
+          ### Verify
+          APKs are signed with the Bigwizard Media release key. The SHA-256 checksums
+          are listed below.
+          NOTES
+          cd app/build/outputs/apk/release && sha256sum *.apk > /tmp/checksums.txt && cd -
+          gh release create "$TAG" \
+            app/build/outputs/apk/release/*.apk \
+            /tmp/checksums.txt \
+            --title "Aria $TAG" \
+            --notes-file /tmp/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

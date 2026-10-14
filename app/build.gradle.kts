@@ -26,6 +26,22 @@ android {
         }
     }
 
+    signingConfigs {
+        // Release keystore is provided by CI via ARIA_KEYSTORE_* env vars
+        // (GitHub Actions secrets). Absent locally / on PRs -> config stays
+        // empty and the release build below falls back to the debug key.
+        create("release") {
+            val ksPath = System.getenv("ARIA_KEYSTORE_PATH")
+            if (!ksPath.isNullOrBlank()) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("ARIA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ARIA_KEY_ALIAS")
+                keyPassword = System.getenv("ARIA_KEY_PASSWORD")
+                storeType = "PKCS12"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -34,7 +50,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug") // CI will override
+            // Real release key when CI provides it; debug key otherwise so
+            // PR and local builds keep working without secrets.
+            signingConfig = if (!System.getenv("ARIA_KEYSTORE_PATH").isNullOrBlank())
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
         }
         debug {
             applicationIdSuffix = ".debug"
