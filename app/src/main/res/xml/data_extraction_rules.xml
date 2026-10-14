@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. Paths must match where the data really lives. -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- Never back up API keys or conversation history to cloud -->
-        <exclude domain="sharedpref" path="aria_prefs.xml" />
-        <exclude domain="database" />
+        <!-- Never back up API keys or conversation history to the cloud -->
+        <exclude domain="file" path="datastore/aria_prefs.preferences_pb" />
+        <exclude domain="database" path="aria_database" />
+        <exclude domain="database" path="aria_database-wal" />
+        <exclude domain="database" path="aria_database-shm" />
+        <exclude domain="file" path="vosk-models/" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="aria_prefs.xml" />
+        <!-- The API key is Keystore-encrypted and can't be read on another device anyway -->
+        <exclude domain="file" path="datastore/aria_prefs.preferences_pb" />
+        <exclude domain="file" path="vosk-models/" />
     </device-transfer>
 </data-extraction-rules>

@@ -2,8 +2,6 @@ package com.bigwizard.aria.data.local
 
 import android.content.Context
 import androidx.room.*
-import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
 import com.bigwizard.aria.data.model.Message
 import com.bigwizard.aria.data.model.Session
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +34,10 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int = 50): List<Message>
+
+    /** Every message, oldest first, capped so huge histories stay cheap on low-RAM devices. */
+    @Query("SELECT * FROM (SELECT * FROM messages ORDER BY timestamp DESC LIMIT :limit) ORDER BY timestamp ASC")
+    fun getAllMessages(limit: Int = 500): Flow<List<Message>>
 }
 
 @Dao

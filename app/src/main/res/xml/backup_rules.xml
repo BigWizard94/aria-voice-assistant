@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower. Paths must match where the data really lives. -->
 <full-backup-content>
-    <!-- Exclude sensitive data from backups -->
-    <exclude domain="sharedpref" path="aria_prefs.xml" />
+    <!-- Settings incl. the (encrypted) API key: DataStore file, not SharedPreferences -->
+    <exclude domain="file" path="datastore/aria_prefs.preferences_pb" />
+    <!-- Conversation history -->
     <exclude domain="database" path="aria_database" />
+    <exclude domain="database" path="aria_database-wal" />
+    <exclude domain="database" path="aria_database-shm" />
+    <!-- ~70 MB speech model: re-downloadable, far above the 25 MB backup quota -->
+    <exclude domain="file" path="vosk-models/" />
 </full-backup-content>
