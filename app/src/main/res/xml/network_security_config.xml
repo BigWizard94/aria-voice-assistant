@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cleartext (http://) is allowed so the advertised local AI backends work:
+    Ollama / LM Studio on this phone (localhost) or on a PC on the home network
+    (e.g. http://192.168.1.20:11434/v1). Android 9+ blocks cleartext by default,
+    which made the "Ollama" and "LM Studio" presets fail with
+    "CLEARTEXT communication not permitted". Hosted providers all use https, and
+    Settings warns when an API key would be sent over plain http.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

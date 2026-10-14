@@ -24,20 +24,28 @@ import java.util.UUID
  *  - Queue management (interrupt or enqueue)
  *  - Sentence chunking for long responses
  */
-class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitListener {
+class TextToSpeechEngine(context: Context) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
-    private var isReady = false
+    @Volatile private var isReady = false
+    @Volatile private var initFailed = false
+
+    /** Utterance whose completion fires [onSpeakingDone] (the last chunk). */
+    @Volatile private var finalUtteranceId: String? = null
+
+    /** Speech requested before the engine finished binding (first launch). */
+    private var pendingSpeech: (() -> Unit)? = null
 
     private val _ttsState = MutableStateFlow<TtsState>(TtsState.Idle)
     val ttsState: StateFlow<TtsState> = _ttsState.asStateFlow()
 
-    private var onSpeakingDone: (() -> Unit)? = null
+    @Volatile private var onSpeakingDone: (() -> Unit)? = null
 
     // ── Initialization ────────────────────────────────────────────────────────
 
     init {
-        tts = TextToSpeech(context, this)
+        // Application context: the engine outlives activities and must not leak them.
+        tts = TextToSpeech(context.applicationContext, this)
     }
 
     override fun onInit(status: Int) {
@@ -52,9 +60,14 @@ class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitList
             isReady = true
             _ttsState.value = TtsState.Ready
             Log.i(TAG, "TTS engine initialized")
+            pendingSpeech?.invoke()
+            pendingSpeech = null
         } else {
             Log.e(TAG, "TTS initialization failed with status: $status")
+            initFailed = true
             _ttsState.value = TtsState.Error("TTS engine failed to initialize")
+            pendingSpeech = null
+            finishUtterance()
         }
     }
 
@@ -67,24 +80,31 @@ class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitList
             }
 
             override fun onDone(utteranceId: String?) {
-                _ttsState.value = TtsState.Ready
-                onSpeakingDone?.invoke()
-                onSpeakingDone = null
+                // Long replies are split into chunks: only the last one ends the turn.
+                if (utteranceId != null && utteranceId == finalUtteranceId) {
+                    _ttsState.value = TtsState.Ready
+                    finishUtterance()
+                }
+            }
+
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                if (utteranceId != null && utteranceId == finalUtteranceId) {
+                    _ttsState.value = TtsState.Ready
+                    finishUtterance()
+                }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "TTS error for utterance: $utteranceId")
                 _ttsState.value = TtsState.Error("Speech output error")
-                onSpeakingDone?.invoke()
-                onSpeakingDone = null
+                finishUtterance()
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
                 Log.e(TAG, "TTS error $errorCode for utterance: $utteranceId")
                 _ttsState.value = TtsState.Error("Speech output error: $errorCode")
-                onSpeakingDone?.invoke()
-                onSpeakingDone = null
+                finishUtterance()
             }
         })
     }
@@ -101,33 +121,44 @@ class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitList
         interrupt: Boolean = true,
         onDone: (() -> Unit)? = null
     ) {
-        if (!isReady || tts == null) {
-            Log.w(TAG, "TTS not ready, cannot speak: $text")
+        if (initFailed || tts == null) {
+            Log.w(TAG, "TTS unavailable, cannot speak: ${text.take(80)}")
             onDone?.invoke()
             return
         }
+        if (!isReady) {
+            // Engine still binding (common on the very first reply) — speak once ready.
+            pendingSpeech = { speak(text, speed, pitch, interrupt, onDone) }
+            return
+        }
 
+        // A new utterance that interrupts the old one ends the old turn first.
+        if (interrupt) finishUtterance()
         onSpeakingDone = onDone
 
         tts?.setSpeechRate(speed.coerceIn(0.1f, 4.0f))
         tts?.setPitch(pitch.coerceIn(0.1f, 2.0f))
 
         val queueMode = if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        val utteranceId = UUID.randomUUID().toString()
 
-        val params = Bundle().apply {
-            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
-        }
-
-        // Chunk long text to avoid TTS limits (max ~4000 chars per utterance)
+        // Chunk long text to stay under TextToSpeech.getMaxSpeechInputLength() (~4000 chars)
         val chunks = chunkText(text)
+        val lastId = UUID.randomUUID().toString()
+        finalUtteranceId = lastId
         chunks.forEachIndexed { index, chunk ->
             val chunkMode = if (index == 0) queueMode else TextToSpeech.QUEUE_ADD
-            val chunkId = if (index == chunks.lastIndex) utteranceId else UUID.randomUUID().toString()
-            tts?.speak(chunk, chunkMode, params, chunkId)
+            val chunkId = if (index == chunks.lastIndex) lastId else UUID.randomUUID().toString()
+            val params = Bundle().apply {
+                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, chunkId)
+            }
+            if (tts?.speak(chunk, chunkMode, params, chunkId) == TextToSpeech.ERROR) {
+                Log.e(TAG, "TTS speak() rejected chunk $index")
+                finishUtterance()
+                return
+            }
         }
 
-        Log.d(TAG, "Speaking: ${text.take(80)}...")
+        Log.d(TAG, "Speaking: ${text.take(80)}")
     }
 
     /**
@@ -136,15 +167,24 @@ class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitList
      */
     fun speakToken(token: String, speed: Float = 1.0f, pitch: Float = 1.0f) {
         if (!isReady || tts == null) return
-        tts?.setSpeechRate(speed)
-        tts?.setPitch(pitch)
+        tts?.setSpeechRate(speed.coerceIn(0.1f, 4.0f))
+        tts?.setPitch(pitch.coerceIn(0.1f, 2.0f))
         tts?.speak(token, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
     }
 
+    /** Stops speech. The pending done-callback is dropped (caller owns the state change). */
     fun stop() {
-        tts?.stop()
-        _ttsState.value = TtsState.Ready
+        pendingSpeech = null
         onSpeakingDone = null
+        finalUtteranceId = null
+        tts?.stop()
+        if (isReady) _ttsState.value = TtsState.Ready
+    }
+
+    private fun finishUtterance() {
+        val callback = onSpeakingDone
+        onSpeakingDone = null
+        callback?.invoke()
     }
 
     fun isSpeaking(): Boolean = tts?.isSpeaking == true
@@ -208,6 +248,8 @@ class TextToSpeechEngine(private val context: Context) : TextToSpeech.OnInitList
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
     fun destroy() {
+        pendingSpeech = null
+        onSpeakingDone = null
         tts?.stop()
         tts?.shutdown()
         tts = null

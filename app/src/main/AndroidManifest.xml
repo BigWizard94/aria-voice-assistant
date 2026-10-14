@@ -6,25 +6,32 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required on Android 14+ for foregroundServiceType="microphone" -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Needed for AlarmClock.ACTION_SET_ALARM / ACTION_SET_TIMER -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Hardware features (not required — works on Android Go) -->
+    <!-- A voice assistant needs a microphone. -->
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="true" />
 
-    <!-- Declare telephony as an optional feature to match CALL_PHONE / SEND_SMS permissions -->
+    <!-- Telephony is optional (tablets / Wi-Fi-only devices can still install). -->
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
+
+    <!-- Android 11+ package visibility: lets "open <app>" find launchable apps by name. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:name=".AriaApplication"
@@ -36,6 +43,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Aria"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true"
         tools:targetApi="31">
 
@@ -46,7 +54,8 @@
             android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Aria.Splash">
+            android:theme="@style/Theme.Aria.Splash"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -62,6 +71,7 @@
         <service
             android:name=".service.AriaVoiceInteractionService"
             android:exported="true"
+            android:label="@string/app_name"
             android:permission="android.permission.BIND_VOICE_INTERACTION">
             <intent-filter>
                 <action android:name="android.service.voice.VoiceInteractionService" />
@@ -71,26 +81,38 @@
                 android:resource="@xml/interaction_service" />
         </service>
 
-        <!-- ── Foreground Listening Service ──────────────────────────── -->
+        <!-- Session service referenced by interaction_service.xml (sessionService) -->
+        <service
+            android:name=".service.AriaSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!-- Offline recognizer referenced by interaction_service.xml (recognitionService) -->
+        <service
+            android:name=".service.AriaRecognitionService"
+            android:exported="true"
+            android:label="@string/app_name"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
+        <!-- ── Listening Service (microphone foreground service) ─────── -->
         <service
             android:name=".service.AriaListenerService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- ── Boot Receiver (restart listener on reboot) ─────────────── -->
-        <receiver
-            android:name=".receiver.BootReceiver"
-            android:exported="true">
-            <intent-filter android:priority="1000">
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-            </intent-filter>
-        </receiver>
-
         <!-- ── Settings Activity ──────────────────────────────────────── -->
         <activity
             android:name=".ui.screens.SettingsActivity"
             android:exported="false"
+            android:windowSoftInputMode="adjustResize"
             android:parentActivityName=".ui.screens.MainActivity" />
 
         <!-- ── Conversation History Activity ─────────────────────────── -->
